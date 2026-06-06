@@ -49,14 +49,12 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Ambient background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full bg-brand-primary/5 blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-[400px] h-[400px] rounded-full bg-brand-primary/3 blur-3xl" />
       </div>
 
       <div className="w-full max-w-md animate-in zoom-in-95 duration-500 relative z-10">
-        {/* Logo strip */}
         <div className="flex items-center justify-center gap-2 mb-8">
           <div className="w-8 h-8 rounded-lg bg-brand-primary flex items-center justify-center text-black font-black text-sm">
             GW
@@ -66,9 +64,7 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
           </span>
         </div>
 
-        {/* Card */}
         <div className="bg-surface-base border border-border-strong rounded-2xl overflow-hidden shadow-2xl">
-          {/* Card Header */}
           <div className="px-8 pt-8 pb-6 border-b border-border text-center">
             <div className="w-16 h-16 rounded-full bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center mx-auto mb-4">
               <UserCircle2 className="w-8 h-8 text-brand-primary" />
@@ -81,15 +77,10 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
             </p>
           </div>
 
-          {/* Card Content */}
           <form onSubmit={handleSubmit} noValidate>
             <div className="px-8 py-6 space-y-4">
-              {/* Full Name */}
               <div className="space-y-2">
-                <label
-                  htmlFor="candidate-name"
-                  className="text-sm font-medium text-text-primary"
-                >
+                <label htmlFor="candidate-name" className="text-sm font-medium text-text-primary">
                   Full Name
                 </label>
                 <input
@@ -104,12 +95,8 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
                 />
               </div>
 
-              {/* Email Address */}
               <div className="space-y-2">
-                <label
-                  htmlFor="candidate-email"
-                  className="text-sm font-medium text-text-primary"
-                >
+                <label htmlFor="candidate-email" className="text-sm font-medium text-text-primary">
                   Email Address
                 </label>
                 <input
@@ -124,12 +111,8 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
                 />
               </div>
 
-              {/* Role Applying For */}
               <div className="space-y-2">
-                <label
-                  htmlFor="candidate-role"
-                  className="text-sm font-medium text-text-primary"
-                >
+                <label htmlFor="candidate-role" className="text-sm font-medium text-text-primary">
                   Role Applying For
                 </label>
                 <input
@@ -144,7 +127,6 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
                 />
               </div>
 
-              {/* Inline validation error */}
               {error && (
                 <p className="text-sm text-rose-400 font-medium" role="alert">
                   {error}
@@ -152,7 +134,6 @@ export function OnboardingStep({ onContinue }: OnboardingStepProps) {
               )}
             </div>
 
-            {/* Card Footer */}
             <div className="px-8 pb-8">
               <button
                 type="submit"
