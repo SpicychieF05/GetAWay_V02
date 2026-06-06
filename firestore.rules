@@ -28,21 +28,55 @@ service cloud.firestore {
       function isRoomOwner() {
         return isSignedIn() && existing().recruiterId == request.auth.uid;
       }
-      // [PHASE 1] Candidate identity check — requires candidateUid written on join.
-      // Candidate Firestore access will be re-enabled in Phase 1 (Candidate Onboarding).
+      // [PHASE 1] Candidate identity check — candidateUid is written by /api/room/join
+      // before any Firestore client read is attempted, so this function is now safe.
       function isRoomCandidate() {
         return isSignedIn() && existing().candidateUid == request.auth.uid;
       }
 
-      // PHASE 0: Only the room owner can read.
-      // PHASE 1: Will re-add || isRoomCandidate() once candidate auth is implemented.
-      allow read: if isRoomOwner();
+      // [PHASE 1] Candidates can now read their room document so the onboarding
+      // flow can display room metadata. Read is gated on candidateUid being set
+      // (enforced by the isRoomCandidate() function above).
+      allow read: if isRoomOwner() || isRoomCandidate();
 
-      // Only the room owner can update room status (e.g., WAITING → ACTIVE → ENDED).
-      // Room creation and deletion are handled server-side via Admin SDK (bypasses rules).
-      allow update: if isRoomOwner() &&
-        incoming().diff(existing()).affectedKeys().hasAny(['status', 'updatedAt', 'trustScore']);
+      // Recruiter can update room status, trustScore, updatedAt.
+      // Candidate can update only their profile fields (defence-in-depth;
+      // actual writes go through Admin SDK API route which bypasses rules).
+      allow update: if
+        (isRoomOwner() && incoming().diff(existing()).affectedKeys()
+          .hasOnly(['status', 'updatedAt', 'trustScore']))
+        ||
+        (isRoomCandidate() && incoming().diff(existing()).affectedKeys()
+          .hasOnly(['candidate', 'candidateProfileSet', 'updatedAt', 'joinedAt']));
+
       allow create, delete: if false; // Admin SDK only
+    }
+
+    // ─── Candidate Sessions (Phase 1) ─────────────────────────────────────────
+    // Consent audit records — written once by the candidate, readable by the room owner.
+    // Security Architecture §10: "Consent must be recorded server-side."
+    // Note: The actual write is performed server-side via Admin SDK (/api/candidate/profile).
+    // These client-side rules serve as defence-in-depth.
+    match /rooms/{roomId}/candidateSessions/{sessionId} {
+      function isParentRoomOwner() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
+      }
+      function isParentRoomCandidate() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
+      }
+
+      // Room owner (recruiter) can read consent records for reporting.
+      // Candidate can read their own session document.
+      allow read: if isParentRoomOwner() || isParentRoomCandidate();
+
+      // Candidate can create their session record once.
+      // [IMPORTANT] In practice this is always done server-side via Admin SDK.
+      allow create: if isParentRoomCandidate();
+
+      // Consent records are immutable — no updates or deletes allowed.
+      allow update, delete: if false;
     }
 
     // ─── Alerts (AI Monitoring) ───────────────────────────────────────────────
@@ -68,7 +102,7 @@ service cloud.firestore {
     // ─── WebRTC Signaling (Offer / Answer) ────────────────────────────────────
     // Both the recruiter (caller) and candidate (callee) need read/write access
     // during the SDP negotiation phase.
-    // [PHASE 1] Will tighten once candidateUid is set on join.
+    // [PHASE 1] Tightened: signaling only permitted on non-ended rooms.
     match /rooms/{roomId}/webrtc/{nodeId} {
       function isParentRoomOwner() {
         return isSignedIn() &&
@@ -78,9 +112,12 @@ service cloud.firestore {
         return isSignedIn() &&
           get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
       }
+      function isRoomActive() {
+        return get(/databases/$(database)/documents/rooms/$(roomId)).data.status != 'ended';
+      }
 
       allow read: if isParentRoomOwner() || isParentRoomCandidate();
-      allow create, update: if isParentRoomOwner() || isParentRoomCandidate();
+      allow create, update: if (isParentRoomOwner() || isParentRoomCandidate()) && isRoomActive();
       allow delete: if isParentRoomOwner();
     }
 
@@ -101,8 +138,7 @@ service cloud.firestore {
     }
 
     // ─── ICE Candidates: Callee (Candidate → Recruiter) ──────────────────────
-    // [PHASE 1] Currently requires candidateUid in the room document.
-    // Will be updated in Phase 1 when candidate anonymous auth is implemented.
+    // [PHASE 1] candidateUid is now reliably set before any ICE writes are attempted.
     match /rooms/{roomId}/calleeCandidates/{candidateId} {
       function isParentRoomOwner() {
         return isSignedIn() &&
@@ -119,4 +155,3 @@ service cloud.firestore {
     }
   }
 }
-
