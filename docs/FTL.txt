@@ -1,0 +1,285 @@
+Feature Ticket List (FTL)
+GetAWay
+This document is the primary build execution document for engineers and AI coding agents. It breaks the GetAWay product into the smallest possible, independently buildable units.
+
+Ticket Categories
+PHASE 1: Project Foundation
+PHASE 2: Database Layer
+PHASE 3: Authentication & Access
+PHASE 4: Core Infrastructure
+PHASE 5: Interview Room System
+PHASE 6: Candidate Onboarding
+PHASE 7: WebRTC Layer
+PHASE 8: AI Monitoring System
+PHASE 9: Recruiter Dashboard
+PHASE 10: Reports System
+PHASE 11: Analytics System
+PHASE 12: Frontend Polish
+PHASE 13: Security Hardening
+PHASE 14: Testing
+PHASE 15: Launch Readiness
+PHASE 16: Future Features
+Dependency Graph
+Sprint Planning
+MVP Definition
+
+PHASE 1: Project Foundation
+Ticket ID: INIT-001
+Feature Name: Next.js & Tailwind Configuration Objective: Establish the foundational frontend framework, dark-mode styling, and typography system. Description: Configure Next.js 16 App Router. Setup Tailwind CSS with oklch color variables for the GetAWay brand (Teal primary). Add Inter and Poppins fonts. Ensure the color scheme is dark and enforced globally. Acceptance Criteria:
+✓ Next.js app runs without errors.
+✓ Tailwind compiles custom variables from globals.css.
+✓ Inter and Poppins fonts load correctly.
+✓ Dark mode is the default and only theme. Dependencies: None Priority: Must Have Complexity: S Estimated Effort: 2 hours Technical Areas: Frontend, CSS Files Likely Impacted: package.json, src/app/layout.tsx, src/app/globals.css, tailwind.config.ts (or Tailwind v4 config) AI Agent Prompt:
+"Initialize a Next.js 16 App Router project with Tailwind CSS. Modify globals.css to include the specific oklch dark-mode brand colors for GetAWay (Primary: oklch(0.7 0.15 160)). Load Inter and Poppins fonts in layout.tsx and apply them to standard text and headings respectively."
+Ticket ID: INIT-002
+Feature Name: Component Library Setup Objective: Install base UI primitives to accelerate feature development. Description: Install @base-ui/react, lucide-react, and configure base primitive components (Button, Card, Input, Badge) using cva and tailwind-merge. Acceptance Criteria:
+✓ Button component supports default, outline, ghost, and destructive variants.
+✓ Card component supports the .glass-panel UI aesthetic.
+✓ cn() utility is functional. Dependencies: INIT-001 Priority: Must Have Complexity: M Estimated Effort: 3 hours Technical Areas: Frontend Files Likely Impacted: src/lib/utils.ts, src/components/ui/button.tsx, src/components/ui/card.tsx AI Agent Prompt:
+"Create a cn utility using clsx and tailwind-merge in src/lib/utils.ts. Implement reusable React components for Button, Card, Badge, and Input using cva for variants, matching the GetAWay glassmorphism and teal aesthetic."
+Ticket ID: INIT-003
+Feature Name: Firebase Client SDK Setup Objective: Initialize Firebase for frontend auth and real-time database access. Description: Add firebase package. Create a lazy singleton client in src/lib/firebase/client.ts. Bind to NEXT_PUBLIC_FIREBASE_* environment variables. Acceptance Criteria:
+✓ Firebase app initializes without errors on the client.
+✓ Missing env vars throw clear runtime errors. Dependencies: None Priority: Must Have Complexity: S Estimated Effort: 1 hour Technical Areas: Frontend, Firebase Files Likely Impacted: src/lib/firebase/client.ts, .env.example AI Agent Prompt:
+"Create a Firebase client initialization script in src/lib/firebase/client.ts. Export auth and db (Firestore). Ensure it uses the singleton pattern to prevent re-initialization during hot reloading. Bind to standard Next.js public environment variables."
+
+PHASE 2: Database Layer
+Ticket ID: DB-001
+Feature Name: Firestore Collections & Zod Schemas Objective: Define strongly-typed data structures for Rooms, Sessions, and Signaling. Description: Create src/lib/schemas.ts defining Zod schemas for the Room, Session, Candidate, and TrustLog objects. Create helper functions to access these collections in Firestore. Acceptance Criteria:
+✓ Zod schemas exist for all core data models.
+✓ TypeScript interfaces are inferred from Zod. Dependencies: INIT-003 Priority: Must Have Complexity: M Estimated Effort: 3 hours Technical Areas: Firestore, Types Files Likely Impacted: src/lib/schemas.ts, src/lib/db.ts AI Agent Prompt:
+"Create Zod schemas and inferred TypeScript types in src/lib/schemas.ts for a Room (roomId, createdAt, recruiterId), Session (id, roomId, status, alerts), CandidateInfo (name, email), and WebRTC Signal data. Ensure strict typing."
+Ticket ID: DB-002
+Feature Name: Basic Security Rules Objective: Prevent unauthorized database reads/writes. Description: Write initial firestore.rules. Block all access by default. Allow recruiters to read/write their own rooms. Allow candidates to read room details and write signaling data using roomId. Acceptance Criteria:
+✓ Recruiters cannot read other recruiters' data.
+✓ Candidates can only write to the /webrtc/{roomId} subcollection. Dependencies: DB-001 Priority: Must Have Complexity: M Estimated Effort: 2 hours Technical Areas: Firestore, Security Files Likely Impacted: firestore.rules AI Agent Prompt:
+"Write Firebase firestore.rules. Deny all by default. Allow recruiters to CRUD rooms where resource.data.recruiterId == request.auth.uid. Allow unauthenticated users to read rooms if they know the ID, and write to webrtc/{roomId}/* subcollections for signaling."
+
+PHASE 3: Authentication & Access
+Ticket ID: AUTH-001
+Feature Name: Recruiter Login UI Objective: Allow recruiters to securely authenticate. Description: Build the login page at /auth/login using standard email/password forms. Use the standard Card layout. Add loading states. Acceptance Criteria:
+✓ UI displays email and password fields.
+✓ Errors (e.g., "Invalid password") display inline. Dependencies: INIT-002 Priority: Must Have Complexity: M Estimated Effort: 3 hours Technical Areas: Frontend Files Likely Impacted: src/app/auth/login/page.tsx AI Agent Prompt:
+"Create a login page at src/app/auth/login/page.tsx using the Card, Input, and Button components. Include a form with Email and Password fields, state for loading, and inline error display. Use GetAWay's dark glassmorphism style."
+Ticket ID: AUTH-002
+Feature Name: Firebase Auth Integration Objective: Wire login UI to Firebase Authentication. Description: Connect the login form to signInWithEmailAndPassword. On success, redirect to /recruiter/overview. Acceptance Criteria:
+✓ Successful login redirects to dashboard.
+✓ Auth state persists across reloads. Dependencies: AUTH-001, INIT-003 Priority: Must Have Complexity: S Estimated Effort: 2 hours Technical Areas: Frontend, Firebase Files Likely Impacted: src/app/auth/login/page.tsx AI Agent Prompt:
+"Integrate Firebase client authentication into the login page. On form submit, call signInWithEmailAndPassword. If successful, use useRouter().push('/recruiter/overview'). Catch and display Firebase auth errors appropriately."
+Ticket ID: AUTH-003
+Feature Name: Next.js Middleware Route Protection Objective: Prevent unauthorized access to the recruiter dashboard. Description: Implement src/middleware.ts to check for a valid Firebase Auth session cookie before allowing access to /recruiter/*. Redirect to /auth/login if missing. Acceptance Criteria:
+✓ Unauthenticated users visiting /recruiter/overview are redirected.
+✓ Authorized users can load the dashboard. Dependencies: AUTH-002 Priority: Must Have Complexity: M Estimated Effort: 4 hours Technical Areas: Backend, Security Files Likely Impacted: src/middleware.ts, src/app/api/auth/session/route.ts AI Agent Prompt:
+"Implement Next.js middleware to protect all routes under /recruiter/*. Since Firebase Client Auth uses IndexedDB, you will need to create an API route that accepts an ID token and sets a secure session cookie. Have the middleware verify this cookie."
+
+PHASE 4: Core Infrastructure
+Ticket ID: CORE-001
+Feature Name: Global Error Handling & Toast Notifications Objective: Standardise error displays and success messages. Description: Implement src/app/error.tsx for crash recovery. Integrate sonner for toast notifications in layout.tsx. Acceptance Criteria:
+✓ Unhandled errors display a branded fallback UI.
+✓ toast.success and toast.error can be called from anywhere. Dependencies: INIT-002 Priority: Should Have Complexity: S Estimated Effort: 2 hours Technical Areas: Frontend Files Likely Impacted: src/app/error.tsx, src/app/layout.tsx, src/components/ui/sonner.tsx AI Agent Prompt:
+"Implement a global error.tsx file using a glass panel UI with a Retry button. Integrate the sonner toast library in the root layout with a dark theme configuration to match the GetAWay brand."
+
+PHASE 5: Interview Room System
+Ticket ID: ROOM-001
+Feature Name: Initialize Room Page Objective: Allow recruiters to create new interview workspaces. Description: Build /recruiter/initialize with a "Generate Interview Room" button. On generation, display the Room ID, candidate link, and interviewer link with copy buttons. Acceptance Criteria:
+✓ Room ID is generated and displayed.
+✓ Links can be copied to the clipboard with toast feedback. Dependencies: CORE-001, DB-001 Priority: Must Have Complexity: M Estimated Effort: 3 hours Technical Areas: Frontend Files Likely Impacted: src/app/recruiter/initialize/page.tsx AI Agent Prompt:
+"Build the /recruiter/initialize page. Include a primary 'Generate Interview Room' button. Upon clicking, simulate room generation, then display the generated roomId and copyable links for the Candidate and Interviewer. Use lucide-react icons for the copy actions."
+Ticket ID: ROOM-002
+Feature Name: Room Generation Firestore Logic Objective: Persist generated rooms to the database. Description: Wire the "Generate" button to actually create a document in the rooms collection. Initialize an empty sessions subcollection. Acceptance Criteria:
+✓ Room appears in Firestore.
+✓ ID is a UUID or structured ID (e.g., GW-XXXX). Dependencies: ROOM-001, DB-001 Priority: Must Have Complexity: S Estimated Effort: 2 hours Technical Areas: Firestore Files Likely Impacted: src/app/recruiter/initialize/page.tsx AI Agent Prompt:
+"Update the 'Generate Room' logic to write a new room document to Firestore using the Firebase Client SDK. The room should include createdAt, recruiterId (from auth context), and default settings. Handle loading and error states."
+
+PHASE 6: Candidate Onboarding
+Ticket ID: CAND-001
+Feature Name: Candidate Details Form (OnboardingStep) Objective: Collect basic info from the candidate before joining. Description: Build /interview/[roomId] default view. Create the OnboardingStep showing Name, Email, and Role fields. Validate inputs. Acceptance Criteria:
+✓ Form requires all fields.
+✓ Invalid emails trigger inline validation errors. Dependencies: INIT-002 Priority: Must Have Complexity: M Estimated Effort: 3 hours Technical Areas: Frontend Files Likely Impacted: src/components/interview/CandidateFlow.tsx, src/components/interview/OnboardingStep.tsx AI Agent Prompt:
+"Build the OnboardingStep component for candidate details collection. Render a centered glassmorphic card with Name, Email, and Role text inputs. Validate that all fields are filled before allowing the user to press Continue."
+Ticket ID: CAND-002
+Feature Name: Interview Guidelines & Consent (RulesStep) Objective: Ensure candidates agree to AI proctoring rules. Description: Build RulesStep inside CandidateFlow. Display an un-editable scroll area of rules. Add a required consent checkbox. Acceptance Criteria:
+✓ "Enter Live Room" button is disabled until consent is checked.
+✓ Rules list is easily readable. Dependencies: CAND-001 Priority: Must Have Complexity: S Estimated Effort: 2 hours Technical Areas: Frontend Files Likely Impacted: src/components/interview/RulesStep.tsx AI Agent Prompt:
+"Create a RulesStep component. Use a ScrollArea to list interview guidelines (Camera Required, Mic Required, AI Proctoring). Below it, add a Checkbox for consent. Disable the 'Enter Live Room' submit button unless the checkbox is ticked."
+
+PHASE 7: WebRTC Layer
+Ticket ID: RTC-001
+Feature Name: useWebRTC Core Hook (Media) Objective: Acquire local media streams. Description: Build src/hooks/useWebRTC.ts. Implement logic to request getUserMedia (mic & cam) and expose toggle methods. Acceptance Criteria:
+✓ Browser prompts for permissions.
+✓ Hook returns localStream which can be attached to a <video> tag.
+✓ toggleMic and toggleCam correctly mute/disable tracks. Dependencies: None Priority: Must Have Complexity: L Estimated Effort: 4 hours Technical Areas: WebRTC, Frontend Files Likely Impacted: src/hooks/useWebRTC.ts AI Agent Prompt:
+"Create a robust useWebRTC React hook. Implement a function to request user media (video and audio). Expose the localStream state, alongside micOn, camOn, and functions to toggle the enabled state of the respective tracks. Handle permission denied errors gracefully."
+Ticket ID: RTC-002
+Feature Name: WebRTC Firestore Signaling Objective: Connect candidate and interviewer via P2P. Description: Expand useWebRTC to handle SDP Offers, Answers, and ICE candidates via Firestore /webrtc/{roomId}/ collections. Acceptance Criteria:
+✓ Interviewer creates Offer; Candidate creates Answer.
+✓ ICE candidates are exchanged and connection state reaches connected.
+✓ Remote stream is successfully received. Dependencies: RTC-001, DB-002 Priority: Must Have Complexity: XL Estimated Effort: 8 hours Technical Areas: WebRTC, Firestore Files Likely Impacted: src/hooks/useWebRTC.ts AI Agent Prompt:
+"Extend the useWebRTC hook to implement Firestore-based signaling. The hook should accept a roomId and a role ('caller' or 'callee'). Implement creating RTCPeerConnection, generating SDP offers/answers, listening to Firestore document changes for signaling data, and exchanging ICE candidates."
+
+PHASE 8: AI Monitoring System
+Ticket ID: AI-001
+Feature Name: Mock Trust Engine & Alerts Objective: Simulate AI trust scoring before full model integration. Description: Create a simulation loop in InterviewerView that randomly generates trust score fluctuations and periodic mock alerts ("Multiple faces detected"). Acceptance Criteria:
+✓ Trust score starts at 100 and updates dynamically.
+✓ Alerts appear in the UI. Dependencies: RTC-002 Priority: Should Have (Beta Required) Complexity: M Estimated Effort: 3 hours Technical Areas: Frontend, State Files Likely Impacted: src/components/interview/InterviewerView.tsx AI Agent Prompt:
+"Inside InterviewerView, implement a useEffect loop that simulates AI trust monitoring. Randomly fluctuate a trustScore state between 70 and 100. Periodically push mock alert strings to an alerts array state to simulate proctoring events."
+
+PHASE 9: Recruiter Dashboard
+Ticket ID: DASH-001
+Feature Name: Recruiter Sidebar Layout Objective: Provide consistent navigation for recruiters. Description: Build src/app/recruiter/layout.tsx featuring a fixed left sidebar with links to Overview, Initialize, Sessions, Analytics, and Settings. Acceptance Criteria:
+✓ Sidebar stays fixed while content scrolls.
+✓ Active navigation item is highlighted with a teal glow. Dependencies: INIT-002 Priority: Must Have Complexity: M Estimated Effort: 2 hours Technical Areas: Frontend Files Likely Impacted: src/app/recruiter/layout.tsx AI Agent Prompt:
+"Create a layout.tsx for the /recruiter route group. Implement a 64-width fixed sidebar using the glass-panel style. Include navigation links (Overview, Initialize, Sessions, Analytics, Settings) using lucide-react icons. Use usePathname to style the active link with teal text and a soft glow."
+Ticket ID: DASH-002
+Feature Name: Sessions Monitoring Page Objective: Allow recruiters to view all active and past rooms. Description: Build /recruiter/sessions. Fetch rooms from Firestore in real-time. Display a grid of cards showing room ID, candidate, status, and alerts. Acceptance Criteria:
+✓ List updates automatically when new rooms are created.
+✓ Shows empty state if no rooms exist. Dependencies: DASH-001, ROOM-002 Priority: Must Have Complexity: L Estimated Effort: 4 hours Technical Areas: Frontend, Firestore Files Likely Impacted: src/app/recruiter/sessions/page.tsx AI Agent Prompt:
+"Build the /recruiter/sessions page. Subscribe to the rooms collection in Firestore using onSnapshot filtered by the current recruiter's ID. Display the rooms in a responsive grid of glass-panel cards. Show the room ID, creation date, candidate name, and a button to view the session."
+
+PHASE 10: Reports System
+Ticket ID: REP-001
+Feature Name: Session Report UI Objective: Present the AI analysis post-interview. Description: Build /report/[roomId]/page.tsx. Display Candidate Info, Trust Score Bar, Alerts list, and a vertical chronological timeline of the interview events. Acceptance Criteria:
+✓ Layout strictly follows the 1/3 candidate card, 2/3 timeline split.
+✓ Color-coding matches the design spec (teal >80, yellow >60, red <60). Dependencies: DASH-002 Priority: Must Have Complexity: L Estimated Effort: 4 hours Technical Areas: Frontend Files Likely Impacted: src/app/report/[roomId]/page.tsx AI Agent Prompt:
+"Build the /report/[roomId] page. Create a 3-column grid layout where the left column is a Candidate Info card displaying their final trust score, and the right 2 columns show a list of AI alerts and a vertical timeline of session events. Apply semantic color-coding based on the trust score."
+
+PHASE 11: Analytics System
+Ticket ID: ANALYTICS-001
+Feature Name: Recharts Integration (Sessions Chart) Objective: Visualize session volume trends. Description: Implement SessionsChart.tsx using recharts. Render a green area chart. Dynamically import it in /recruiter/analytics to disable SSR. Acceptance Criteria:
+✓ Chart renders successfully without Next.js hydration errors.
+✓ Tooltip matches the dark theme. Dependencies: DASH-001 Priority: Nice To Have (Beta) Complexity: M Estimated Effort: 3 hours Technical Areas: Frontend, Dataviz Files Likely Impacted: src/components/recruiter/SessionsChart.tsx, src/app/recruiter/analytics/page.tsx AI Agent Prompt:
+"Create a SessionsChart component using recharts. It should accept an array of room objects and plot room creation volume over time using an AreaChart. Use the primary teal color for the area fill and stroke. In /recruiter/analytics, import this component dynamically with { ssr: false }."
+
+PHASE 12: Frontend Polish
+Ticket ID: UX-001
+Feature Name: Thank You Exit Page Objective: Provide a clean exit point for candidates. Description: Build /thankyou page. Include a success animation, platform info, and developer credits. Acceptance Criteria:
+✓ Displays after the interview ends.
+✓ Smooth CSS transitions on mount. Dependencies: None Priority: Should Have Complexity: S Estimated Effort: 2 hours Technical Areas: Frontend, CSS Files Likely Impacted: src/app/thankyou/page.tsx AI Agent Prompt:
+"Build the /thankyou page for candidates exiting an interview. Use a full-screen layout with ambient teal blurred circles in the background. Create a central glass panel with a success message, a platform info card, and a developer credits section. Add a delayed fade-up entry animation."
+
+PHASE 13: Security Hardening
+Ticket ID: SEC-001
+Feature Name: Strict Firestore Rules Update Objective: Finalize database security for production. Description: Update firestore.rules. Validate payloads (e.g., ensure trustScore is a number between 0 and 100). Prevent candidates from modifying room settings. Acceptance Criteria:
+✓ Complex writes fail if schema doesn't match.
+✓ WebRTC paths are strictly scoped. Dependencies: DB-002 Priority: Must Have (Production) Complexity: L Estimated Effort: 4 hours Technical Areas: Firebase Security Files Likely Impacted: firestore.rules AI Agent Prompt:
+"Enhance the firestore.rules. Ensure that when writing to the rooms collection, required fields exist. Ensure candidates can only write to the calleeCandidates path and cannot modify the main room document. Add data validation checks for trust scores and alert structures."
+
+PHASE 14: Testing
+Ticket ID: TEST-001
+Feature Name: WebRTC Hook Unit Tests Objective: Ensure connection logic is reliable. Description: Setup Jest. Mock RTCPeerConnection and mediaDevices. Write tests for media toggling and signaling state changes. Acceptance Criteria:
+✓ toggleMic and toggleCam test suites pass.
+✓ State machine transitions correctly. Dependencies: RTC-002 Priority: Nice To Have Complexity: L Estimated Effort: 5 hours Technical Areas: Testing Files Likely Impacted: src/hooks/useWebRTC.test.ts AI Agent Prompt:
+"Set up a Jest test suite for the useWebRTC React hook. Create mocks for navigator.mediaDevices.getUserMedia and the global RTCPeerConnection. Write test cases to verify that toggleMic correctly manipulates the audio track's enabled property."
+
+PHASE 15: Launch Readiness
+Ticket ID: LAUNCH-001
+Feature Name: Environment Validation Objective: Prevent deployments with missing secrets. Description: Implement src/lib/env.ts using Zod to validate process.env at app startup. Acceptance Criteria:
+✓ Build fails immediately if NEXT_PUBLIC_FIREBASE_API_KEY is missing. Dependencies: CORE-001 Priority: Must Have (Production) Complexity: S Estimated Effort: 1 hour Technical Areas: DevOps, Validation Files Likely Impacted: src/lib/env.ts, next.config.js AI Agent Prompt:
+"Create a src/lib/env.ts file that uses Zod to validate both client (NEXT_PUBLIC_*) and server environment variables. Import this file in next.config.js so that the validation runs automatically during next build."
+
+PHASE 16: Future Features
+Ticket ID: FUT-001
+Feature Name: TensorFlow.js Face Detection Objective: Replace the mock trust engine with real AI. Description: Integrate @tensorflow-models/face-detection. Run the model in a requestAnimationFrame loop on the candidate's local stream to count faces. Acceptance Criteria:
+✓ Model runs locally without server API calls.
+✓ Generates an alert if faces > 1 or faces == 0. Dependencies: AI-001 Priority: Future Feature Complexity: XL Estimated Effort: 12 hours Technical Areas: AI/ML, Frontend Files Likely Impacted: src/hooks/useFaceDetection.ts, src/components/interview/LiveRoomStep.tsx AI Agent Prompt:
+"Implement a useFaceDetection hook using @tensorflow-models/face-detection and MediaPipe Web. Accept a HTMLVideoElement ref. In a continuous loop, run the detector. If the face count deviates from exactly 1, trigger an alert callback."
+
+Dependency Graph
+INIT-001 (Next.js Setup)
+├── INIT-002 (Base UI)
+│   ├── AUTH-001 (Login UI)
+│   │   └── AUTH-002 (Firebase Auth)
+│   │   	└── AUTH-003 (Middleware)
+│   ├── CORE-001 (Error & Toast)
+│   │   └── ROOM-001 (Init Room UI)
+│   │   	└── ROOM-002 (Room Gen Logic)
+│   │       	└── DASH-002 (Sessions UI)
+│   │           	└── REP-001 (Report UI)
+│   ├── CAND-001 (Onboarding)
+│   │   └── CAND-002 (Rules)
+│   └── DASH-001 (Sidebar)
+│   	└── ANALYTICS-001 (Chart)
+└── INIT-003 (Firebase Client)
+	└── DB-001 (Schemas)
+    	├── DB-002 (Basic Rules)
+    	│   └── SEC-001 (Strict Rules)
+    	└── ROOM-002
+	└── RTC-001 (WebRTC Media)
+    	└── RTC-002 (WebRTC Signaling)
+        	└── AI-001 (Mock Trust)
+Critical Path for MVP: INIT-001 → INIT-002 → INIT-003 → DB-001 → AUTH-001 → AUTH-002 → ROOM-001 → ROOM-002 → CAND-001 → RTC-001 → RTC-002
+
+Sprint Planning
+Sprint 1: Foundation & Infrastructure
+INIT-001, INIT-002, INIT-003
+DB-001, DB-002
+CORE-001
+AUTH-001, AUTH-002
+Sprint 2: Room Creation & Candidate Entry
+AUTH-003 (Middleware)
+DASH-001 (Sidebar)
+ROOM-001, ROOM-002
+CAND-001, CAND-002
+Sprint 3: WebRTC Real-time Communications
+RTC-001 (Media)
+RTC-002 (Signaling - Heavy load)
+DASH-002 (Sessions Monitor)
+Sprint 4: AI Mocking & Reporting
+AI-001 (Mock Engine)
+REP-001 (Reports)
+ANALYTICS-001
+UX-001 (ThankYou Page)
+Sprint 5: Hardening & Launch Prep
+SEC-001 (Strict Rules)
+LAUNCH-001 (Env Validation)
+UX Polish & Bug fixing
+
+MVP Definition
+Phase/Feature
+MVP
+Beta
+Production
+Future
+Auth UI & Firebase Auth
+Required
+Required
+Required
+-
+Route Middleware
+-
+Required
+Required
+-
+WebRTC Signaling
+Required
+Required
+Required
+-
+Real AI Face Detection
+-
+-
+-
+Required
+Mock Trust Engine
+Required
+Required
+Replaced
+-
+Report Generation
+Required
+Required
+Required
+-
+Analytics Chart
+-
+Required
+Required
+-
+Strict Security Rules
+-
+-
+Required
+-
+
+ 
+

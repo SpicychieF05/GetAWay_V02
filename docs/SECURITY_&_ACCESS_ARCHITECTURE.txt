@@ -1,0 +1,2082 @@
+SECURITY & ACCESS ARCHITECTURE DOCUMENT
+GetAWay
+   
+DOCUMENT SCOPE
+--------------
+This document is based on a complete analysis of the GetAWay codebase, including:
+  - README.md and AGENTS.md
+  - All API routes (src/app/api/**)
+  - Firestore security rules (firestore.rules)
+  - Firebase configuration (src/lib/firebase/*)
+  - Authentication implementation
+  - WebRTC implementation (src/hooks/useWebRTC.ts)
+  - Environment variables structure
+  - Middleware analysis
+  - Database access patterns
+  - State management (src/store/mockStore.ts)
+  - All UI components and pages
+  - Deployment configuration (vercel.json, next.config.ts)
+  - Existing architecture analysis (docs/architecture-analysis.md)
+
+"Recommendation" and "Future Improvement" labels mark items not yet in code.
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+GetAWay is a browser-native AI-powered interview proctoring platform built on
+Next.js 16, Firebase, and WebRTC. The platform targets a dual-user audience:
+authenticated recruiters who create and monitor sessions, and unauthenticated
+candidates who join via shared room links.
+
+SECURITY POSTURE OVERVIEW
+--------------------------
+The application demonstrates a thoughtful but early-stage security approach.
+The API layer correctly uses Firebase Admin SDK for token verification on
+recruiter-facing routes, and the OTP system correctly hashes codes before
+storage. However, several critical attack surfaces remain unprotected, most
+notably: the candidate-facing API routes have zero authentication or rate
+limiting, Firestore rules allow unrestricted writes to session subcollections,
+and the recruiter dashboard has no middleware-enforced authentication guard.
+
+MAIN STRENGTHS (What Exists Today)
+------------------------------------
+1. Firebase Admin SDK used for server-side token verification — recruiter API
+   routes (rooms, analytics, settings) are properly protected.
+2. OTP codes stored as SHA-256 hashes — plain text OTPs never touch Firestore.
+3. OTPs marked as "used" after single consumption — replay attacks prevented.
+4. OTP expiry enforced (10-minute TTL via Firestore field check).
+5. Zod validation schemas applied to all API inputs — reduces injection risk.
+6. otpCodes Firestore collection correctly blocked from all client access
+   (allow read, write: if false).
+7. Recruiters collection scoped by Firebase Auth UID — recruiter data isolation
+   enforced at Firestore rule level.
+8. Environment variables correctly separated (NEXT_PUBLIC_ for client,
+   private for server-only keys).
+9. .env* correctly gitignored — credentials not in source control.
+10. Admin SDK gracefully degrades if credentials missing during build.
+11. Structured API response helpers (apiSuccess, apiError, apiValidationError)
+    ensure consistent error format.
+12. React Strict Mode enabled — catches common development-time issues.
+
+MAIN WEAKNESSES (Critical Gaps)
+---------------------------------
+1. NO MIDDLEWARE GUARD: The /recruiter/* pages have no server-side auth
+   protection. Any user can access the recruiter dashboard URLs directly.
+2. UNAUTHENTICATED WRITE APIS: Six critical API routes (alerts, trust logs,
+   candidate onboarding, session start/end, report compilation) accept
+   writes from anyone with a room ID — no authentication required.
+3. WEAK ROOM ID ENTROPY: Room IDs follow format "GW-XXXX" (4-digit numeric
+   suffix = only 9,000 possible values). Enumerable in under 1 minute.
+4. FULLY OPEN FIRESTORE SUBCOLLECTIONS: alerts, trustLogs, report, and webrtc
+   subcollections allow read and write from any unauthenticated source.
+5. NO RATE LIMITING: OTP send/verify endpoints have no rate limiting — brute
+   force and OTP flooding attacks are trivially possible.
+6. MOCK STORE IN PRODUCTION PATH: The Zustand mockStore is used in recruiter
+   pages (sessions, initialize, overview, report, settings) — state is not
+   backed by Firestore and will be lost on page refresh or lost between users.
+7. INTERVIEWER ROLE NOT PROTECTED: Any user who appends ?view=interviewer to
+   a room URL gains the interviewer panel — no recruiter authentication check.
+8. WEBHOOK URL NOT VALIDATED: The webhook URL stored in recruiter settings is
+   used in a server-side fetch() call without domain whitelisting or SSRF
+   protection.
+9. NO CONTENT SECURITY POLICY (CSP): No security headers configured in
+   next.config.ts or vercel.json.
+10. FREE PUBLIC TURN SERVERS: openrelay.metered.ca is a public, unauthenticated
+    TURN relay — candidate media traffic is routed through untrusted servers.
+11. SENSITIVE DATA LEAKED IN ERRORS: error.tsx exposes raw error.message to
+    the end user — internal stack traces may be revealed.
+
+PRODUCTION READINESS SCORE: 3.5 / 10
+
+The application is suitable for a controlled academic demonstration or MVP
+prototype. It is NOT production-ready for real hiring workflows due to the
+unprotected write endpoints, weak room ID entropy, and missing middleware
+authentication.
+
+================================================================================
+2. SECURITY PRINCIPLES
+================================================================================
+
+The following principles should guide all security decisions for GetAWay.
+
+1. LEAST PRIVILEGE
+   ----------------
+   Every user, component, and API route should have access ONLY to the
+   resources it absolutely needs — nothing more.
+   
+   Current state: Recruiters have correct privilege scoping for their own data.
+   Candidates and session participants have excessive write access to any room.
+   Recommendation: Apply role-based access at API and Firestore rule level.
+
+2. DEFENSE IN DEPTH
+   ------------------
+   Security should exist at multiple layers — even if one layer fails,
+   another prevents damage. Do not rely on a single control.
+   
+   Current state: Token verification exists at API layer for recruiter routes.
+   Firestore rules are the only guard for candidate/session writes, and they
+   are fully open. There is no middleware layer, no IP filtering, and no
+   anomaly detection.
+   Recommendation: Add middleware auth, tighten Firestore rules, and add rate
+   limiting as three independent protective layers.
+
+3. SECURE BY DEFAULT
+   -------------------
+   New features and routes should default to the most restrictive access
+   possible. Access must be explicitly granted, not implicitly allowed.
+   
+   Current state: New room subcollections default to open access. The WebRTC
+   signaling collection is fully open.
+   Recommendation: All new Firestore paths should default to "allow: if false"
+   until access requirements are explicitly defined and implemented.
+
+4. PRIVACY BY DESIGN
+   -------------------
+   Candidate personal data (name, email, role, behavioral data from AI
+   proctoring) should be collected with consent, stored minimally, and
+   protected appropriately.
+   
+   Current state: Consent checkbox is present in RulesStep. Candidate email
+   and name are stored but not encrypted at rest. There is no data retention
+   policy or deletion mechanism.
+   Recommendation: Add data retention policies, encrypted storage for PII,
+   and a candidate data deletion pathway.
+
+5. ZERO TRUST
+   -----------
+   Never assume that because traffic is coming from inside the system, it is
+   safe. Verify every request regardless of origin.
+   
+   Current state: The session-related API routes (alerts, trust, candidate)
+   trust any caller with a valid room ID. Room IDs are treated as secrets but
+   are too short to be effective.
+   Recommendation: Issue short-lived session tokens to verified session
+   participants. Verify these tokens on every write request.
+
+6. FAIL SECURE
+   ------------
+   When the system encounters an error, it should default to denying access
+   rather than granting it.
+   
+   Current state: The Admin SDK initialization includes a graceful fallback
+   (makeMissingProxy) which prevents hard crashes. API routes return generic
+   500 errors on failure.
+   Recommendation: Ensure all critical paths fail with access denied (403/401)
+   rather than exposing internal error details.
+
+================================================================================
+3. THREAT MODEL
+================================================================================
+
+ASSETS (What We Are Protecting)
+---------------------------------
+- Recruiter account credentials (email/password in Firebase Auth)
+- Candidate personal data (name, email, role — stored in Firestore rooms/{id})
+- Session behavioral data (trust logs, AI alerts — audit-sensitive)
+- Post-session reports (contains integrity scores — employment-sensitive)
+- SMTP credentials (SMTP_USER, SMTP_PASS — email delivery capability)
+- Firebase Admin private key (server-side — full Firestore access)
+- Webhook URLs (recruiter-configured — SSRF attack surface)
+- WebRTC media streams (live audio/video — highly private)
+
+SENSITIVE DATA
+---------------
+- Firebase Admin private key (FIREBASE_ADMIN_PRIVATE_KEY) — CRITICAL
+- SMTP_PASS — HIGH
+- Candidate email addresses — HIGH (PII)
+- Candidate names — MEDIUM (PII)
+- Behavioral/trust score data — HIGH (employment decision data)
+- OTP codes (hashed at rest — protected)
+
+ATTACK SURFACES
+---------------
+1. Public interview page  (/interview/[roomId])
+2. OTP send/verify API    (/api/auth/otp/send, /api/auth/otp/verify)
+3. Candidate API          (/api/rooms/[roomId]/candidate)
+4. Trust log API          (/api/rooms/[roomId]/trust)
+5. Alerts API             (/api/rooms/[roomId]/alerts)
+6. Session start/end API  (/api/rooms/[roomId]/session/start|end)
+7. Report compile API     (/api/rooms/[roomId]/report)
+8. WebRTC signaling       (Firestore /webrtc/{roomId}/* collections)
+9. Webhook endpoint       (outbound fetch in session/end/route.ts)
+10. Recruiter dashboard   (/recruiter/* — no middleware guard)
+11. TURN server           (openrelay.metered.ca — public relay)
+
+TRUST BOUNDARIES
+-----------------
++----------------+--------------------------------------------+
+| Zone           | What It Contains                           |
++----------------+--------------------------------------------+
+| TRUSTED        | Firebase Admin SDK (server-side only)      |
+|                | Vercel serverless functions                 |
+|                | SMTP server                                 |
++----------------+--------------------------------------------+
+| SEMI-TRUSTED   | Authenticated recruiter browser sessions   |
+|                | Firebase Client SDK (token-based)           |
++----------------+--------------------------------------------+
+| UNTRUSTED      | Candidate browser (anonymous)              |
+|                | Interview page visitors                     |
+|                | Public TURN relay servers                   |
+|                | Webhook endpoint URLs                       |
++----------------+--------------------------------------------+
+| NOT TRUSTED    | The public internet                         |
+|                | Unauthenticated API callers                 |
++----------------+--------------------------------------------+
+
+THREAT ANALYSIS
+----------------
+
+THREAT 1: ROOM ID ENUMERATION
+Surface: GET /interview/[roomId], all /api/rooms/[roomId]/* routes
+Risk Level: CRITICAL
+Impact: Attacker enumerates valid room IDs (only 9,000 possibilities with
+        format GW-XXXX), accesses live sessions of other candidates, reads
+        or tampers with trust scores and reports.
+Current Mitigation: None — room IDs are sequential 4-digit numbers.
+Required Mitigation: Change room ID to cryptographically random UUID or 128-bit
+                     token. Example: GW-a3f9e2b1c4d7.
+
+THREAT 2: UNAUTHENTICATED TRUST SCORE MANIPULATION
+Surface: POST /api/rooms/[roomId]/trust
+Risk Level: CRITICAL
+Impact: Any person on the internet can POST arbitrary trust scores to any room
+        by guessing or brute-forcing a room ID. A candidate could manipulate
+        their own trust score to 100% throughout the session.
+Current Mitigation: None.
+Required Mitigation: Require session token or IP binding. At minimum, validate
+                     caller identity against the room's expected participants.
+
+THREAT 3: UNAUTHENTICATED ALERT INJECTION
+Surface: POST /api/rooms/[roomId]/alerts
+Risk Level: HIGH
+Impact: An attacker can inject false alerts ("Multiple persons detected") into
+        any candidate's session, poisoning the post-session report and
+        potentially causing wrongful rejection of a candidate.
+Current Mitigation: Zod schema validation exists (message, issuedBy fields).
+Required Mitigation: Require authentication. Restrict issuedBy=INTERVIEWER to
+                     verified recruiters only.
+
+THREAT 4: OTP BRUTE FORCE
+Surface: POST /api/auth/otp/verify
+Risk Level: HIGH
+Impact: A 6-digit OTP has only 1,000,000 possible values. Without rate
+        limiting, an attacker can try all combinations in seconds to take
+        over any recruiter account.
+Current Mitigation: 10-minute OTP expiry, single-use enforcement.
+Required Mitigation: Implement rate limiting (max 5 attempts per email per
+                     10 minutes). Lock account after threshold breach.
+
+THREAT 5: INTERVIEWER IMPERSONATION
+Surface: /interview/[roomId]?view=interviewer
+Risk Level: HIGH
+Impact: ANY person with a room link can append ?view=interviewer to their URL
+        and gain the full interviewer panel — including the ability to issue
+        warnings and view live trust scores.
+Current Mitigation: None.
+Required Mitigation: Verify Firebase Auth token when view=interviewer is
+                     requested. Confirm the authenticated UID matches the
+                     room's recruiterId.
+
+THREAT 6: WEBHOOK SSRF (Server-Side Request Forgery)
+Surface: POST /api/rooms/[roomId]/session/end (webhook fire)
+Risk Level: HIGH
+Impact: A recruiter (or attacker who controls recruiter settings) can configure
+        a webhook URL pointing to internal services: http://169.254.169.254
+        (AWS metadata), http://localhost:*, or other internal endpoints.
+        The server-side fetch() will execute against these internal targets.
+Current Mitigation: None — URL stored and fetched without validation.
+Required Mitigation: Validate webhook URL against allowlist of external
+                     domains. Block RFC1918 addresses and loopback IPs.
+
+THREAT 7: CANDIDATE DATA EXPOSURE VIA ROOM ID
+Surface: GET /api/rooms/[roomId]/candidate, Firestore rooms/{id}
+Risk Level: MEDIUM
+Impact: Anyone who obtains a room ID can read the candidate's full name,
+        email address, and the role they applied for.
+Current Mitigation: None.
+Required Mitigation: Scope candidate data access to authenticated recruiters
+                     owning the room.
+
+THREAT 8: SESSION TAKEOVER (Replay Attack)
+Surface: /interview/[roomId] (WebRTC join)
+Risk Level: MEDIUM
+Impact: A candidate link, once shared or intercepted, can be reused by a
+        third party after the legitimate candidate has joined or the session
+        has ended.
+Current Mitigation: Room status is tracked (OPEN/ACTIVE/ENDED) but not
+                     enforced at the join level.
+Required Mitigation: Enforce room status checks before allowing new WebRTC
+                     connections. Expire links after session ends.
+
+THREAT 9: FIRESTORE SIGNALING DATA EXPOSURE
+Surface: /webrtc/{roomId}/signal, callerCandidates, calleeCandidates
+Risk Level: MEDIUM
+Impact: SDP (Session Description Protocol) offers and ICE candidates are
+        stored in Firestore with fully open read access. An attacker who
+        obtains a room ID can read SDP data and potentially gather network
+        topology information.
+Current Mitigation: Data is transient and cleaned up on hangup.
+Required Mitigation: Apply TTL policies. Consider server-side signaling relay.
+
+THREAT 10: SMTP CREDENTIAL EXPOSURE
+Surface: Vercel environment variables, local .env.local
+Risk Level: MEDIUM
+Impact: If Vercel environment settings are compromised, SMTP credentials
+        (SMTP_USER, SMTP_PASS) could be used to send spam or phishing
+        emails at scale using the platform's email identity.
+Current Mitigation: .env* is gitignored. Credentials stored in Vercel.
+Required Mitigation: Use app-specific passwords or OAuth2 for Gmail SMTP.
+                     Rotate credentials quarterly.
+
+================================================================================
+4. USER ROLES & ACCESS MATRIX
+================================================================================
+
+IDENTIFIED ROLES
+-----------------
+
+ROLE 1: RECRUITER (Authenticated)
+   Authentication: Firebase Auth (email/password)
+   Identifier: Firebase Auth UID
+
+   CAN DO:
+   - Create new interview rooms (POST /api/rooms)
+   - List their own rooms (GET /api/rooms)
+   - View session reports for their rooms
+   - Configure AI thresholds and settings (GET/PUT /api/settings)
+   - View analytics for their account (GET /api/analytics)
+   - Join interview as interviewer (/interview/[roomId]?view=interviewer)
+   - Issue manual warnings during sessions
+   - Configure webhook URL for session notifications
+
+   CANNOT DO (by design):
+   - Access other recruiters' rooms or data
+   - Read/write other recruiters' settings
+   - Modify otpCodes collection directly
+
+   SENSITIVE ACTIONS:
+   - Password reset via OTP
+   - Webhook URL configuration (SSRF risk)
+   - Deleting rooms (requires auth + ownership)
+
+ROLE 2: CANDIDATE (Unauthenticated)
+   Authentication: None (room ID acts as credential)
+   Identifier: Room ID + onboarding form data
+
+   CAN DO:
+   - Access interview room page via room link
+   - Submit onboarding information (name, email, role)
+   - Provide consent
+   - Join WebRTC session as candidate
+   - Toggle their own camera and microphone
+
+   CANNOT DO:
+   - Access recruiter dashboard
+   - View other candidates' data
+   - Modify trust scores or alerts directly (by design, these are AI-only)
+   - View post-session reports
+
+   SENSITIVE ACTIONS:
+   - Accepting recording consent (legal requirement)
+   - Sharing personal data (name, email)
+
+ROLE 3: SYSTEM / AI PROCTORING ENGINE (In-Browser Service)
+   Authentication: Operates within authenticated candidate session
+   Identifier: Room ID
+
+   CAN DO:
+   - POST trust score updates (/api/rooms/[roomId]/trust)
+   - POST alerts for detected violations (/api/rooms/[roomId]/alerts)
+   - Trigger session start/end (/api/rooms/[roomId]/session/start|end)
+   - Compile post-session report (POST /api/rooms/[roomId]/report)
+
+   SENSITIVE ACTIONS:
+   - All proctoring writes (currently unprotected)
+
+ROLE 4: ADMINISTRATOR (Not yet implemented)
+   This role does not currently exist in the codebase.
+   [Recommendation] A future admin role should be able to:
+   - View all recruiter accounts
+   - Suspend accounts
+   - Access platform-wide analytics
+   - Manage SMTP and Firebase configurations
+
+PERMISSION MATRIX
+------------------
++-----------------------------------------------+------------+-----------+-----------+---------+
+| Resource / Action                              | Recruiter  | Candidate | AI System | Admin   |
++-----------------------------------------------+------------+-----------+-----------+---------+
+| POST /api/rooms (create room)                 | YES        | NO        | NO        | YES     |
+| GET  /api/rooms (list own rooms)              | YES (own)  | NO        | NO        | YES     |
+| GET  /api/analytics                           | YES (own)  | NO        | NO        | YES     |
+| GET  /api/settings                            | YES (own)  | NO        | NO        | YES     |
+| PUT  /api/settings                            | YES (own)  | NO        | NO        | YES     |
+| POST /api/auth/otp/send                       | YES        | NO        | NO        | NO      |
+| POST /api/auth/otp/verify                     | YES        | NO        | NO        | NO      |
+| POST /api/rooms/[id]/candidate                | YES        | YES       | NO        | YES     |
+| GET  /api/rooms/[id]/candidate                | YES(own)*  | NO*       | NO        | YES     |
+| POST /api/rooms/[id]/alerts (AI)             | NO*        | NO*       | YES       | YES     |
+| POST /api/rooms/[id]/alerts (INTERVIEWER)    | YES (own)  | NO        | NO        | YES     |
+| GET  /api/rooms/[id]/alerts                  | YES (own)  | NO        | NO        | YES     |
+| POST /api/rooms/[id]/trust                   | NO         | NO        | YES       | YES     |
+| POST /api/rooms/[id]/session/start           | YES (own)  | NO        | NO        | YES     |
+| POST /api/rooms/[id]/session/end             | YES (own)  | YES       | NO        | YES     |
+| POST /api/rooms/[id]/report                  | YES (own)  | NO        | YES       | YES     |
+| GET  /api/rooms/[id]/report                  | YES (own)  | NO        | NO        | YES     |
+| /recruiter/* pages                           | YES        | NO        | NO        | YES     |
+| /interview/[roomId] (candidate)              | YES        | YES       | N/A       | YES     |
+| /interview/[roomId]?view=interviewer         | YES (own)* | NO*       | N/A       | YES     |
+| Firestore: recruiters/{uid}                  | YES (own)  | NO        | NO        | YES     |
+| Firestore: rooms/{id}                        | YES (own)  | READ ONLY | WRITE*    | YES     |
+| Firestore: rooms/{id}/alerts                 | ANY*       | ANY*      | ANY*      | YES     |
+| Firestore: rooms/{id}/trustLogs              | ANY*       | ANY*      | ANY*      | YES     |
+| Firestore: rooms/{id}/report                 | ANY*       | ANY*      | ANY*      | YES     |
+| Firestore: webrtc/{id}/*                     | ANY*       | ANY*      | ANY*      | YES     |
+| Firestore: otpCodes/{email}                  | NO         | NO        | NO        | ADMIN   |
++-----------------------------------------------+------------+-----------+-----------+---------+
+* = Currently unrestricted (security gap identified)
+
+================================================================================
+5. AUTHENTICATION ARCHITECTURE
+================================================================================
+
+AUTHENTICATION PROVIDERS
+------------------------
+- Firebase Authentication (Email/Password) — Recruiter login/signup
+- OTP via Nodemailer/SMTP — Recruiter password reset
+- No authentication — Candidates (room ID is the credential)
+
+RECRUITER LOGIN FLOW
+---------------------
+[Browser]                    [Next.js API]              [Firebase Auth]
+    |                              |                           |
+    | 1. Submit email + password   |                           |
+    |----------------------------> |                           |
+    |                              | 2. getAuth().signInWithEmailAndPassword()
+    |                              |--------------------------->|
+    |                              |                           | 3. Validate credentials
+    |                              | <-------------------------|
+    |                              | 4. Return ID token        |
+    | <--------------------------- |                           |
+    | 5. Store token in SDK        |                           |
+    | 6. Future requests: Bearer <token>                       |
+    |----------------------------> |                           |
+    |                              | 7. adminAuth.verifyIdToken(token)
+    |                              |--------------------------->|
+    |                              |                           | 8. Decode + return uid
+    |                              | <-------------------------|
+    |                              | 9. Scope query to uid     |
+    | 10. Return response          |                           |
+    | <--------------------------- |                           |
+
+SECURITY STRENGTHS:
+- Firebase ID tokens are short-lived JWTs (1-hour expiry by default)
+- Token verification uses Firebase Admin SDK (cryptographic validation)
+- uid extracted from verified token ensures data isolation
+
+SECURITY WEAKNESSES:
+- No middleware to enforce auth on /recruiter/* page routes
+- Token is managed by Firebase SDK — no custom session duration control
+- No refresh token rotation policy implemented
+- No multi-factor authentication
+
+OTP FLOW (Password Reset)
+--------------------------
+[Browser]                  [Next.js API]              [Firestore]          [Email]
+    |                           |                          |                   |
+    | 1. POST /api/auth/otp/send {email}
+    |-------------------------> |                          |                   |
+    |                           | 2. Generate 6-digit OTP (Math.random)
+    |                           | 3. SHA-256 hash OTP      |                   |
+    |                           | 4. Store: otpCodes/{email} = {hash, expiresAt, used:false}
+    |                           |------------------------->|                   |
+    |                           | 5. sendOtpEmail(email, plainOTP)
+    |                           |---------------------------------------------------->|
+    | 6. Return {message: "OTP sent"}
+    | <------------------------ |                          |                   |
+    |                           |                          |                   |
+    | 7. POST /api/auth/otp/verify {email, otp, newPassword}
+    |-------------------------> |                          |                   |
+    |                           | 8. Fetch otpCodes/{email}
+    |                           |<-------------------------|                   |
+    |                           | 9. Check: used == false  |                   |
+    |                           | 10. Check: now < expiresAt                  |
+    |                           | 11. SHA-256(otp) == stored hash             |
+    |                           | 12. Mark used = true     |                   |
+    |                           |------------------------->|                   |
+    |                           | 13. adminAuth.getUserByEmail(email)         |
+    |                           | 14. adminAuth.updateUser(uid, {password: newPassword})
+    |                           | 15. adminAuth.createCustomToken(uid)        |
+    | 16. Return {customToken}  |                          |                   |
+    | <------------------------ |                          |                   |
+    | 17. signInWithCustomToken(customToken)               |                   |
+
+SECURITY STRENGTHS:
+- OTP is hashed with SHA-256 before storage (never plain text in Firestore)
+- OTP is marked as "used" after consumption — replay prevention
+- OTP expires in 10 minutes
+- New password sent in body (not URL params) — no log exposure
+
+SECURITY WEAKNESSES:
+- OTP generated with Math.random() — NOT cryptographically random
+  (Should use crypto.randomBytes() or crypto.getRandomValues())
+- No rate limiting on OTP send or verify endpoints
+- No account lockout after failed OTP attempts
+- Email subject says "Password Reset Code" — could be phishing vector
+  if domain not verified
+
+CANDIDATE JOIN FLOW
+--------------------
+[Candidate Browser]        [Interview Page]           [Firestore]
+    |                           |                          |
+    | 1. Open /interview/[roomId]
+    |-------------------------> |                          |
+    |                           | 2. Render CandidateFlow  |
+    |                           | 3. Step 1: OnboardingStep|
+    | 4. Submit {name, email, role}
+    |-------------------------> |                          |
+    |                           | 5. mockStore.updateCandidate() [MOCK - not real API]
+    |                           | 6. Step 2: RulesStep     |
+    | 7. Accept consent checkbox|                          |
+    |-------------------------> |                          |
+    |                           | 8. Step 3: LiveRoomStep  |
+    |                           | 9. useWebRTC("candidate")|
+    |                           | 10. getUserMedia({video, audio})
+    |                           | 11. Create RTCPeerConnection
+    |                           | 12. Listen for offer at webrtc/{roomId}/signal/data
+    |                           |<-------------------------|
+    |                           | 13. Receive SDP offer    |
+    |                           | 14. Create + send answer |
+    |                           |------------------------->|
+    |                           | 15. ICE candidate exchange
+    | 16. P2P connection established
+
+SECURITY WEAKNESSES:
+- Room ID is the only "credential" — no OTP for candidate join
+- Onboarding form goes to mockStore (in-memory) not real API
+- No verification that the room exists before showing onboarding
+- No enforcement that only one candidate joins per room
+- Consent is a UI checkbox only — not cryptographically recorded
+
+================================================================================
+6. AUTHORIZATION ARCHITECTURE
+================================================================================
+
+ACCESS CONTROL MODEL
+---------------------
+GetAWay uses a hybrid access control approach:
+
+1. API-Level: Token-based identity verification (Firebase JWT)
+   - Applied to: rooms (CRUD), analytics, settings
+   - Method: verifyAuthToken() in src/lib/api.ts
+
+2. "Security by Obscurity" (Unguessable Room ID)
+   - Applied to: candidate and session-related API routes
+   - Risk: Room IDs are only 9,000 possibilities — NOT truly unguessable
+   
+3. Firestore Rules: Database-level enforcement
+   - Applied to: all Firestore collections
+   - Problem: Subcollections are fully open
+
+OWNERSHIP MODEL
+----------------
+- Rooms: Owned by recruiterId (Firebase UID) stored in room document
+- Recruiter data: Owned by document ID matching Firebase UID
+- Session data: Associated to room via room document ID
+- OTP codes: Server-managed, no client ownership
+
+RESOURCE ACCESS — CURRENT STATE
+---------------------------------
+
+ROOMS: WHO CAN ACCESS
+  Read: Anyone with the room ID (Firestore allow read: if true)
+  Create: Authenticated recruiter (via API + Firestore rule)
+  Update: Anyone (allow update: if true — needed for candidate onboarding)
+  Delete: Authenticated recruiter (API checks auth, Firestore checks uid)
+
+REPORTS: WHO CAN ACCESS
+  Read: Anyone who knows the room ID (POST /api/rooms/[id]/report has no auth)
+  Write: Anyone who knows the room ID (no auth check on compile endpoint)
+  Risk: Report can be overwritten by attacker with room ID
+
+ALERTS: WHO CAN ACCESS
+  Read: Anyone (no auth)
+  Write: Anyone (no auth) — attacker can inject false alerts
+
+ANALYTICS: WHO CAN ACCESS
+  Read: Authenticated recruiter (scoped to their own rooms by recruiterId)
+  Security: GOOD — correctly protected
+
+SETTINGS: WHO CAN ACCESS
+  Read/Write: Authenticated recruiter (scoped by UID)
+  Security: GOOD — correctly protected
+
+WEBRTC SIGNALING: WHO CAN ACCESS
+  Read/Write: Anyone (fully open in Firestore rules)
+  Rationale: Room IDs are "unguessable" but only 9,000 possibilities
+  Risk: SDP hijacking if room ID is compromised
+
+================================================================================
+7. FIRESTORE SECURITY REVIEW
+================================================================================
+
+COLLECTION: recruiters/{uid}
+  Purpose: Recruiter profile and settings storage
+  Who can read: Only the recruiter matching the document UID
+  Who can write: Only the recruiter matching the document UID
+  Who should NOT access: Other recruiters, candidates, public
+  Risk Level: LOW (correctly secured)
+  Current Rule: allow read, write: if request.auth != null && request.auth.uid == uid
+  Assessment: ADEQUATE for MVP. Production should add field-level validation.
+
+COLLECTION: rooms/{roomId}
+  Purpose: Interview room metadata and session state
+  Who can read: EVERYONE (allow read: if true)
+  Who can write: EVERYONE (allow update: if true)
+  Who can create: Authenticated users only
+  Who can delete: Authenticated recruiter (checked in code — not in rules)
+  Who should NOT access: Competitors, unauthorized parties
+  Risk Level: HIGH
+  Issue 1: "allow read: if true" exposes candidate PII to anyone with room ID
+  Issue 2: "allow update: if true" lets attackers modify session status, candidate data
+  Current Rule (problematic):
+    allow read: if true;
+    allow create: if request.auth != null;
+    allow update: if true;
+    allow delete: if request.auth != null;
+
+SUBCOLLECTION: rooms/{roomId}/alerts
+  Purpose: AI-detected and manual interviewer warnings
+  Who can read: Currently everyone
+  Who can write: Currently everyone
+  Who should access: AI system (write), recruiter-owner (read/write), candidate (none)
+  Risk Level: CRITICAL — false alerts can be injected
+  Current Rule: allow read, write: if true
+
+SUBCOLLECTION: rooms/{roomId}/trustLogs
+  Purpose: Immutable audit trail of trust score changes
+  Who can read: Currently everyone
+  Who can write: Currently everyone
+  Who should access: AI system (write only), recruiter-owner (read only)
+  Risk Level: CRITICAL — trust scores can be manipulated
+  Current Rule: allow read, write: if true
+
+SUBCOLLECTION: rooms/{roomId}/report
+  Purpose: Compiled post-session report
+  Who can read: Currently everyone
+  Who can write: Currently everyone
+  Who should access: Report compilation system (write), recruiter-owner (read)
+  Risk Level: HIGH — report can be overwritten or leaked
+  Current Rule: allow read, write: if true
+
+COLLECTION: webrtc/{roomId}/signal
+  Purpose: SDP offer/answer exchange for WebRTC setup
+  Who can read/write: Currently everyone
+  Who should access: Both participants in the room (restricted by room ID)
+  Risk Level: MEDIUM — SDP data reveals network topology
+  Current Rule: allow read, write: if true
+
+SUBCOLLECTIONS: webrtc/{roomId}/callerCandidates, calleeCandidates
+  Purpose: ICE candidate exchange
+  Who can read/write: Everyone
+  Risk Level: MEDIUM — ICE data reveals IP addresses and ports
+  Current Rule: allow read, write: if true
+
+COLLECTION: otpCodes/{email}
+  Purpose: Password reset OTP storage (server-only)
+  Who can read/write: NOBODY from client (allow read, write: if false)
+  Who accesses: Firebase Admin SDK server-side only
+  Risk Level: LOW (correctly secured)
+  Current Rule: allow read, write: if false — CORRECT
+
+RECOMMENDED PRODUCTION-READY FIRESTORE RULES
+---------------------------------------------
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ───────────────────────────────────────────────
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function roomExists(roomId) {
+      return exists(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isRoomOwner(roomId) {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId
+          == request.auth.uid;
+    }
+
+    // ─── Recruiter profiles ─────────────────────────────────────────────
+    match /recruiters/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if isOwner(uid);
+    }
+
+    // ─── Interview rooms ─────────────────────────────────────────────────
+    match /rooms/{roomId} {
+      // Recruiters can read their own rooms; allow public read only of non-PII
+      allow read: if isRoomOwner(roomId) || (
+        // [Recommendation] Implement a field mask for public candidate access
+        resource.data.status == 'OPEN'
+      );
+      allow create: if isAuthenticated();
+      // Only update allowed: candidate joining an open room (limited fields)
+      allow update: if isRoomOwner(roomId) ||
+        // Candidate updates: only allowed if room is OPEN and only candidate field
+        (resource.data.status == 'OPEN' &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['candidate', 'status']));
+      allow delete: if isRoomOwner(roomId);
+
+      // Alerts: only room owner can read; AI system (via Admin SDK) writes
+      match /alerts/{alertId} {
+        allow read: if isRoomOwner(roomId);
+        allow write: if false; // Server-only via Admin SDK
+      }
+
+      // Trust logs: only room owner can read; AI system (via Admin SDK) writes
+      match /trustLogs/{logId} {
+        allow read: if isRoomOwner(roomId);
+        allow write: if false; // Server-only via Admin SDK
+      }
+
+      // Report: only room owner can read; compiled server-side
+      match /report/{doc} {
+        allow read: if isRoomOwner(roomId);
+        allow write: if false; // Server-only via Admin SDK
+      }
+    }
+
+    // ─── WebRTC signaling ────────────────────────────────────────────────
+    // [Recommendation] Add session token validation when implemented
+    match /webrtc/{roomId} {
+      match /signal/{doc} {
+        // Only allow read/write if the parent room exists and is ACTIVE
+        allow read, write: if roomExists(roomId) &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.status
+            in ['OPEN', 'ACTIVE'];
+      }
+      match /callerCandidates/{doc} {
+        allow read, write: if roomExists(roomId);
+      }
+      match /calleeCandidates/{doc} {
+        allow read, write: if roomExists(roomId);
+      }
+    }
+
+    // ─── OTP codes ────────────────────────────────────────────────────────
+    match /otpCodes/{email} {
+      allow read, write: if false; // Server-only via Admin SDK
+    }
+  }
+}
+
+================================================================================
+8. ROW-LEVEL SECURITY MODEL
+================================================================================
+
+RECRUITERS COLLECTION
+  Access Policy: A recruiter document can ONLY be read or written by the
+  recruiter whose Firebase UID matches the document ID.
+  
+  Plain English: "You can only see and edit your own account profile."
+  
+  Ownership Rule: Document ID = Firebase Auth UID
+  Implementation: Firestore rule "request.auth.uid == uid" — CORRECTLY DONE
+  Gap: No field-level validation prevents a recruiter from writing invalid
+       data types (e.g., setting aiThreshold to -999).
+
+ROOMS COLLECTION
+  Access Policy (CURRENT — Insecure):
+    Anyone can read any room. Anyone can update any room.
+  
+  Access Policy (RECOMMENDED):
+    A room can be READ by its owner recruiter only.
+    A room can be CREATED by any authenticated user.
+    A room can be UPDATED by its owner, or by a candidate (restricted fields only).
+    A room can be DELETED by its owner only.
+  
+  Ownership Rule: rooms/{roomId}.data.recruiterId = recruiter's Firebase UID
+  
+  Plain English: "Each recruiter sees only their own interview rooms.
+  Candidates can only update the candidate field on an open room."
+
+ALERTS SUBCOLLECTION
+  Access Policy (CURRENT — Insecure): Anyone can read and write alerts.
+  
+  Access Policy (RECOMMENDED):
+    Alerts can only be WRITTEN by the server via Admin SDK.
+    Alerts can only be READ by the recruiter who owns the room.
+  
+  Plain English: "Only the AI system (running on the server) can create alerts.
+  Only the recruiter can review them."
+  
+  Why This Matters: False alerts could wrongly disqualify a candidate.
+
+TRUSTLOGS SUBCOLLECTION
+  Access Policy (CURRENT — Insecure): Anyone can read and write trust logs.
+  
+  Access Policy (RECOMMENDED):
+    TrustLogs can only be APPENDED (never updated) by the server via Admin SDK.
+    TrustLogs can only be READ by the recruiter who owns the room.
+  
+  Plain English: "Trust scores are an immutable audit trail. Only the
+  AI proctoring server can add to it. Only the recruiter can read it."
+
+REPORT SUBCOLLECTION
+  Access Policy (CURRENT — Insecure): Anyone can read and write reports.
+  
+  Access Policy (RECOMMENDED):
+    Reports can only be WRITTEN by the server at session end.
+    Reports can only be READ by the recruiter who owns the room.
+  
+  Plain English: "Interview reports are private to the recruiter. They cannot
+  be modified by candidates or third parties."
+
+ANALYTICS
+  Access Policy (CURRENT): API route correctly scopes to recruiterId.
+  Policy: Recruiter can only view analytics for their own rooms.
+  Status: API level is correctly secured. No Firestore rule needed (read via API).
+
+WEBRTC SIGNALING
+  Access Policy (CURRENT — Insecure): Fully open.
+  
+  Access Policy (RECOMMENDED):
+    Read/write only allowed when the parent room document exists and is in
+    OPEN or ACTIVE status.
+  
+  Plain English: "WebRTC signaling only works for rooms that are currently
+  active. Once a session ends, signaling data becomes inaccessible."
+
+OTPCODES COLLECTION
+  Access Policy: Server-only. Client reads and writes are blocked.
+  Status: CORRECTLY IMPLEMENTED — allow read, write: if false.
+  
+  Plain English: "OTP codes are a server-side secret. No browser or
+  unauthenticated caller can ever touch this data."
+
+================================================================================
+9. API SECURITY REVIEW
+================================================================================
+
+ROUTE: POST /api/auth/otp/send
+  File: src/app/api/auth/otp/send/route.ts
+  Purpose: Generate and email an OTP for recruiter password reset
+  Authentication Required: NO
+  Authorization Required: NO (any email can trigger OTP)
+  Validation: YES — OtpSendSchema (email format)
+  Potential Abuse:
+    - OTP flooding: Attacker sends thousands of OTPs to target email
+    - Email bombing: Use as automated spam tool against any email address
+    - OTP storage collision: Rapid sends overwrite previous OTP documents
+  Rate Limiting Requirements: MAX 3 requests per email per 10 minutes
+  Recommended Protections:
+    1. Implement rate limiting middleware (e.g., Vercel KV or Redis)
+    2. Verify the email belongs to an existing Firebase account BEFORE sending
+    3. Add CAPTCHA or proof-of-work for repeat requests
+  Risk: HIGH
+
+ROUTE: POST /api/auth/otp/verify
+  File: src/app/api/auth/otp/verify/route.ts
+  Purpose: Verify OTP and reset recruiter password
+  Authentication Required: NO (OTP is the credential)
+  Authorization Required: NO
+  Validation: YES — ResetPasswordSchema (email, otp, newPassword)
+  Potential Abuse:
+    - Brute force: 6-digit OTP = 1,000,000 combinations (automated in seconds)
+    - Account takeover: Successful brute force changes any recruiter's password
+  Rate Limiting Requirements: MAX 5 attempts per email per 10 minutes; lockout
+  Recommended Protections:
+    1. Rate limiting: lock after 5 failures per email
+    2. Implement account lockout with unlock via separate mechanism
+    3. Log all OTP verification attempts with timestamps and IP addresses
+    4. Alert recruiter via email on successful password change
+  Risk: CRITICAL
+
+ROUTE: POST /api/rooms
+  File: src/app/api/rooms/route.ts
+  Purpose: Create a new interview room
+  Authentication Required: YES — verifyAuthToken() (CORRECTLY IMPLEMENTED)
+  Authorization Required: YES — uid from verified token
+  Validation: YES — CreateRoomSchema (empty schema — no body needed)
+  Potential Abuse:
+    - Room spam: Authenticated recruiter creates thousands of rooms (no limit)
+    - ID collision: generateRoomId() uses Math.random() over 9,000 values
+  Rate Limiting Requirements: MAX 20 rooms per recruiter per day
+  Recommended Protections:
+    1. Increase room ID entropy to 128-bit random UUID
+    2. Add per-recruiter room creation limits
+    3. Remove hardcoded Math.random() in favor of crypto.randomBytes()
+  Risk: MEDIUM
+
+ROUTE: GET /api/rooms
+  File: src/app/api/rooms/route.ts
+  Purpose: List all rooms for the authenticated recruiter
+  Authentication Required: YES (CORRECTLY IMPLEMENTED)
+  Authorization Required: YES — data scoped by recruiterId == auth.uid
+  Validation: N/A (GET request)
+  Potential Abuse: None identified (properly scoped)
+  Risk: LOW
+
+ROUTE: POST /api/rooms/[roomId]/candidate
+  File: src/app/api/rooms/[roomId]/candidate/route.ts
+  Purpose: Save candidate onboarding data (name, email, role)
+  Authentication Required: NO
+  Authorization Required: NO
+  Validation: YES — CandidateSubmitSchema
+  Potential Abuse:
+    - Data poisoning: Attacker overwrites candidate info with fake data
+    - Spam: Repeated calls overwrite the candidate field
+    - PII injection: Submit malicious name/email values
+    - Room flooding: Call on ended rooms to re-open them (status set to ACTIVE)
+  Rate Limiting Requirements: 1 successful submission per room
+  Recommended Protections:
+    1. Enforce single candidate per room (check room.candidate == null before write)
+    2. Add room status check (only allow on OPEN rooms)
+    3. Sanitize candidate name and role fields
+  Risk: HIGH
+
+ROUTE: GET /api/rooms/[roomId]/candidate
+  File: src/app/api/rooms/[roomId]/candidate/route.ts
+  Purpose: Get candidate info for a room
+  Authentication Required: NO
+  Authorization Required: NO
+  Potential Abuse: Exposes candidate PII (name, email) to anyone with room ID
+  Recommended Protections: Require recruiter authentication
+  Risk: HIGH
+
+ROUTE: POST /api/rooms/[roomId]/alerts
+  File: src/app/api/rooms/[roomId]/alerts/route.ts
+  Purpose: Create an alert (AI or interviewer-issued)
+  Authentication Required: NO
+  Authorization Required: NO
+  Validation: YES — AlertSchema (message, issuedBy: "AI" | "INTERVIEWER")
+  Potential Abuse:
+    - False alert injection: Any actor can create "INTERVIEWER" alerts
+    - Report poisoning: Fake alerts appear in post-session report
+    - Harassment: Create alerts mid-session to unfairly penalize candidate
+  Rate Limiting Requirements: MAX 100 alerts per room per session
+  Recommended Protections:
+    1. Require authentication for INTERVIEWER alerts (verify recruiter ownership)
+    2. Only AI system (Admin SDK) should be able to write AI alerts
+    3. Add rate limiting per room
+  Risk: CRITICAL
+
+ROUTE: GET /api/rooms/[roomId]/alerts
+  File: src/app/api/rooms/[roomId]/alerts/route.ts
+  Purpose: Get all alerts for a room
+  Authentication Required: NO
+  Authorization Required: NO
+  Recommended Protections: Require recruiter authentication (ownership check)
+  Risk: MEDIUM
+
+ROUTE: POST /api/rooms/[roomId]/trust
+  File: src/app/api/rooms/[roomId]/trust/route.ts
+  Purpose: Log a trust score event
+  Authentication Required: NO
+  Authorization Required: NO
+  Validation: YES — TrustLogSchema (score: 0-100, reason: optional)
+  Potential Abuse:
+    - Score manipulation: Candidate sends POST with score=100 during session
+    - Score destruction: Attacker sends score=0 to frame a candidate
+    - Flooding: Thousands of trust log entries corrupt analytics
+  Rate Limiting Requirements: MAX 1 trust log per 10 seconds per room
+  Recommended Protections:
+    1. Issue session tokens to authenticated participants
+    2. Verify token before accepting trust log write
+    3. Add rate limiting per room
+    4. Validate score delta (reasonable change per event)
+  Risk: CRITICAL
+
+ROUTE: POST /api/rooms/[roomId]/session/start
+  File: src/app/api/rooms/[roomId]/session/start/route.ts
+  Purpose: Mark session as ACTIVE
+  Authentication Required: NO
+  Authorization Required: NO
+  Potential Abuse: Start sessions prematurely or for already-ended rooms
+  Recommended Protections: Require recruiter authentication and ownership check
+  Risk: HIGH
+
+ROUTE: POST /api/rooms/[roomId]/session/end
+  File: src/app/api/rooms/[roomId]/session/end/route.ts
+  Purpose: Mark session as ENDED and fire webhook
+  Authentication Required: NO
+  Authorization Required: NO
+  Webhook: Fire-and-forget fetch() to recruiter-configured URL
+  Potential Abuse:
+    - Prematurely end sessions
+    - SSRF via webhook URL (see Threat 6)
+    - Information disclosure to attacker-controlled server
+  Recommended Protections:
+    1. Require recruiter authentication and ownership check
+    2. Validate webhook URL against domain allowlist
+    3. Block RFC1918 addresses in webhook URL
+    4. Add HMAC signature to webhook payload for receiver verification
+  Risk: CRITICAL
+
+ROUTE: POST /api/rooms/[roomId]/report
+  File: src/app/api/rooms/[roomId]/report/route.ts
+  Purpose: Compile post-session report
+  Authentication Required: NO
+  Authorization Required: NO
+  Potential Abuse: Generate reports for rooms that are not ended, overwrite reports
+  Recommended Protections: Require recruiter authentication and ownership check
+  Risk: HIGH
+
+ROUTE: GET /api/rooms/[roomId]/report
+  File: src/app/api/rooms/[roomId]/report/route.ts
+  Purpose: Fetch compiled report
+  Authentication Required: NO
+  Authorization Required: NO
+  Potential Abuse: Expose sensitive candidate behavioral data to anyone
+  Recommended Protections: Require recruiter authentication and ownership check
+  Risk: HIGH
+
+ROUTE: GET /api/analytics
+  File: src/app/api/analytics/route.ts
+  Purpose: Return recruiter session trends
+  Authentication Required: YES (CORRECTLY IMPLEMENTED)
+  Authorization Required: YES — scoped by recruiterId
+  Risk: LOW
+
+ROUTE: GET/PUT /api/settings
+  File: src/app/api/settings/route.ts
+  Purpose: Get/update recruiter preferences
+  Authentication Required: YES (CORRECTLY IMPLEMENTED)
+  Authorization Required: YES — scoped by auth.uid
+  Potential Abuse: PUT allows setting arbitrary webhookUrl (SSRF — see Threat 6)
+  Recommended Protections: Validate webhookUrl domain on write
+  Risk: MEDIUM
+
+API RISK SUMMARY TABLE
+-----------------------
++-----------------------------------------------+------+-------+-------+-------+---------+
+| Route                                         | Auth | AuthZ | Valid | Rate  | Risk    |
++-----------------------------------------------+------+-------+-------+-------+---------+
+| POST /api/auth/otp/send                       | NO   | NO    | YES   | NO    | HIGH    |
+| POST /api/auth/otp/verify                     | NO   | NO    | YES   | NO    | CRITICAL|
+| POST /api/rooms                               | YES  | YES   | YES   | NO    | MEDIUM  |
+| GET  /api/rooms                               | YES  | YES   | N/A   | NO    | LOW     |
+| POST /api/rooms/[id]/candidate                | NO   | NO    | YES   | NO    | HIGH    |
+| GET  /api/rooms/[id]/candidate                | NO   | NO    | N/A   | NO    | HIGH    |
+| POST /api/rooms/[id]/alerts                   | NO   | NO    | YES   | NO    | CRITICAL|
+| GET  /api/rooms/[id]/alerts                   | NO   | NO    | N/A   | NO    | MEDIUM  |
+| POST /api/rooms/[id]/trust                    | NO   | NO    | YES   | NO    | CRITICAL|
+| POST /api/rooms/[id]/session/start            | NO   | NO    | N/A   | NO    | HIGH    |
+| POST /api/rooms/[id]/session/end              | NO   | NO    | N/A   | NO    | CRITICAL|
+| POST /api/rooms/[id]/report                   | NO   | NO    | N/A   | NO    | HIGH    |
+| GET  /api/rooms/[id]/report                   | NO   | NO    | N/A   | NO    | HIGH    |
+| GET  /api/analytics                           | YES  | YES   | N/A   | NO    | LOW     |
+| GET  /api/settings                            | YES  | YES   | N/A   | NO    | LOW     |
+| PUT  /api/settings                            | YES  | YES   | YES   | NO    | MEDIUM  |
++-----------------------------------------------+------+-------+-------+-------+---------+
+
+================================================================================
+10. CANDIDATE ACCESS SECURITY
+================================================================================
+
+PUBLIC ROOM LINKS
+------------------
+Room links follow the format: https://get-a-way.vercel.app/interview/GW-XXXX
+
+The room ID is the ONLY security control for candidate access. This design is
+intentional to minimize friction for candidates, but creates several risks.
+
+ENUMERATION RISKS
+  The current room ID format is "GW-" followed by a 4-digit number (1000-9999).
+  This creates only 9,000 possible values. An attacker can enumerate all valid
+  rooms in approximately:
+    - 9,000 HTTP requests to /api/rooms/[roomId]/candidate
+    - At 10 requests/second: 15 minutes to enumerate all rooms
+    - At 100 requests/second: 90 seconds to enumerate all rooms
+  
+  Impact: An attacker can discover all active interview rooms, read candidate
+  names and emails, and inject data into active sessions.
+  
+  [Recommendation] Change room ID to a UUID v4 or 128-bit random token.
+  Example: GW-a3f9e2b1c4d7-8e9f-4a2b-c1d3 (2^128 possibilities)
+
+LINK SHARING RISKS
+  1. Room link forwarded to third party who joins as candidate
+  2. Room link shared on social media (e.g., screenshot with URL visible)
+  3. Room link intercepted in corporate email systems
+  
+  [Recommendation] Issue time-limited OTP links for candidates too. The link
+  expires after the session ends or 24 hours, whichever is sooner.
+
+REPLAY RISKS
+  Once a session ends, the room URL remains valid. Anyone with the old link
+  can still visit the URL and attempt to onboard as a candidate.
+  
+  Current behavior: No check in OnboardingStep or CandidateFlow to verify
+  room status (OPEN/ACTIVE/ENDED) before proceeding.
+  
+  [Recommendation] Check room status at page load. If room.status == "ENDED",
+  redirect to an expired-link page.
+
+CONSENT COLLECTION
+  The RulesStep component (src/components/interview/RulesStep.tsx) requires
+  candidates to check a consent checkbox before entering the live room.
+  
+  Consent text: "I consent to being recorded and agree to follow all guidelines."
+  
+  ISSUES:
+  1. Consent is a UI-only control — it is not recorded or persisted to Firestore.
+  2. No timestamp of consent is stored.
+  3. The legal name of the policy is not shown (no link to full privacy policy).
+  4. The CandidateSubmitSchema does have a consentGiven: z.literal(true) field
+     but the OnboardingStep currently calls mockStore (not the real API).
+  
+  [Recommendation]:
+  1. Persist consent with timestamp to Firestore when candidate submits form.
+  2. Include recruiter company name and session purpose in consent text.
+  3. Link to full privacy policy before consent checkbox.
+  4. Store: { consentGiven: true, consentTimestamp: ISO8601, ipAddress: string }
+
+SESSION JOINING SECURITY
+  The CandidateFlow component progresses candidates through three steps:
+  Onboarding → Rules → Live Room. There is no server-side validation that:
+  1. The room exists and is in OPEN status
+  2. No other candidate has already joined
+  3. The session has not already ended
+  
+  This allows multiple candidates to join the same room simultaneously,
+  which would result in a corrupted WebRTC session and mixed proctoring data.
+
+================================================================================
+11. WEBRTC SECURITY REVIEW
+================================================================================
+
+SIGNALING ARCHITECTURE
+------------------------
+WebRTC signaling is handled via Firestore in a dedicated collection:
+  /webrtc/{roomId}/signal/data        — SDP offer/answer
+  /webrtc/{roomId}/callerCandidates   — Interviewer ICE candidates
+  /webrtc/{roomId}/calleeCandidates   — Candidate ICE candidates
+
+Implementation file: src/hooks/useWebRTC.ts (412 lines)
+
+ICE / STUN Configuration:
+  - stun.l.google.com:19302 (and stun1/stun2/stun3)
+  - turn:openrelay.metered.ca:80 (PUBLIC, UNAUTHENTICATED)
+  - turn:openrelay.metered.ca:443 (PUBLIC, UNAUTHENTICATED)
+  - turn:openrelay.metered.ca:443?transport=tcp
+
+SDP EXCHANGE FLOW
+  Interviewer creates offer → writes to Firestore signal/data
+  Candidate listens → receives offer → creates answer → writes to Firestore
+  Both parties exchange ICE candidates → P2P connection established
+  All audio/video transmitted P2P (SRTP encrypted by WebRTC standard)
+
+CURRENT RISKS
+
+1. PUBLIC TURN SERVER — CRITICAL
+   The TURN relay used (openrelay.metered.ca) is a free public service.
+   Credentials are hardcoded and publicly known:
+     username: "openrelayproject"
+     credential: "openrelayproject"
+   
+   Risks:
+   - Any third party can use the same TURN relay with the same credentials
+   - The relay operator can potentially intercept or log relayed traffic
+   - TURN relay is a trusted intermediary for media when P2P fails
+   - Service reliability is not guaranteed (can go down any time)
+   
+   [Recommendation] Deploy a dedicated TURN server (e.g., Coturn on a VPS)
+   or use a paid TURN service (Twilio TURN, Cloudflare Calls, Metered.ca paid).
+   Use time-limited TURN credentials generated per-session.
+
+2. OPEN SIGNALING COLLECTION — HIGH
+   The /webrtc/{roomId}/* collections are fully open. An attacker with a
+   room ID can:
+   - Read SDP offers/answers (reveals network topology)
+   - Read ICE candidates (reveals local and reflexive IP addresses)
+   - Write a fake SDP offer to disrupt the signaling process
+   - Perform man-in-the-middle against the signaling channel
+
+   [Recommendation] Restrict signaling read/write to participants with
+   a valid session token. At minimum, gate on room existence and ACTIVE status.
+
+3. METADATA EXPOSURE — MEDIUM
+   ICE candidates stored in Firestore contain:
+   - Local IP addresses (private network info)
+   - Server-reflexive IP addresses (public IP of the user)
+   - Port numbers in use
+   
+   These are visible to anyone who can read the callerCandidates collection.
+   
+   [Recommendation] Configure mdns candidates for local IP concealment.
+   Apply proper Firestore rules to limit callerCandidates/calleeCandidates reads.
+
+4. NO SIGNALING AUTH — HIGH
+   The useWebRTC hook writes directly to Firestore using the Firebase Client SDK.
+   There is no server-side validation that:
+   - The caller is the actual interviewer for this room
+   - The caller is the actual candidate for this room
+   
+   [Recommendation] Issue short-lived signed tokens to room participants.
+   Verify tokens in Firestore rules before allowing signaling writes.
+
+5. STALE SIGNAL DATA — MEDIUM
+   The interviewer's cleanupSignal() function deletes signal data on leave.
+   However, if the interviewer disconnects abruptly (browser crash, network loss),
+   stale SDP data persists in Firestore indefinitely.
+   
+   [Recommendation] Implement Firestore TTL (Time-to-Live) policy on the
+   webrtc collection. Delete signal data 2 hours after createdAt.
+
+6. DEBUG LOGGING — LOW
+   The useWebRTC hook logs extensively to console:
+   "[WebRTC] Offer written to Firestore at webrtc/GW-XXXX/signal/data"
+   "[WebRTC][Interviewer] Received callee ICE candidate"
+   
+   These logs expose signaling paths and room IDs in browser consoles.
+   
+   [Recommendation] Remove verbose console.log statements in production.
+   Replace with a structured logging service that can be disabled.
+
+MEDIA TRANSMISSION SECURITY
+  - WebRTC uses DTLS-SRTP by default — media is encrypted in transit
+  - Browser enforces DTLS handshake — keys are not exposed to JS code
+  - Media never touches Vercel servers or Firestore (it is P2P)
+  - Assessment: Media encryption is GOOD by default (WebRTC standard)
+
+================================================================================
+12. DATA PROTECTION & PRIVACY
+================================================================================
+
+DATA COLLECTED
+---------------
+| Data Type            | Source          | Stored Where       | Encrypted |
+|----------------------|-----------------|--------------------|-----------|
+| Recruiter email      | Firebase Auth   | Firebase Auth DB   | YES (FBA) |
+| Recruiter password   | Firebase Auth   | Firebase Auth DB   | YES (FBA) |
+| Candidate name       | Onboarding form | Firestore rooms/{id}| NO       |
+| Candidate email      | Onboarding form | Firestore rooms/{id}| NO       |
+| Candidate role       | Onboarding form | Firestore rooms/{id}| NO       |
+| Trust scores         | AI proctoring   | Firestore trustLogs| NO        |
+| Alert messages       | AI/Interviewer  | Firestore alerts   | NO        |
+| Session timestamps   | System          | Firestore rooms/{id}| NO       |
+| OTP hash             | Server          | Firestore otpCodes | N/A (hash)|
+| WebRTC SDP           | Browser         | Firestore webrtc/  | NO        |
+| ICE candidates       | Browser         | Firestore webrtc/  | NO        |
+| Live video/audio     | Camera/Mic      | Never stored (P2P) | YES (SRTP)|
+| Webhook payload      | Session end     | Recruiter server   | In transit|
+
+RETAINED DATA (Post-Session)
+------------------------------
+After a session ends, the following persists indefinitely (no deletion policy):
+- Candidate name, email, role in rooms/{roomId}
+- All trust logs in rooms/{roomId}/trustLogs/*
+- All alerts in rooms/{roomId}/alerts/*
+- Compiled report in rooms/{roomId}/report/compiled
+- Session timestamps
+
+[Recommendation] Implement a data retention policy:
+- Candidate PII: 90 days after session end
+- Trust logs: 1 year (audit purposes)
+- Reports: 2 years (employment records compliance)
+- OTP codes: Already auto-expired (10 minutes)
+
+ENCRYPTION REQUIREMENTS
+  Currently:
+  - Firebase Auth stores passwords hashed (managed by Firebase)
+  - Firestore data is encrypted at rest by Google (AES-256) — infrastructure level
+  - Firestore data is encrypted in transit (TLS) — infrastructure level
+  - OTP codes stored as SHA-256 hashes (application level)
+  
+  Missing:
+  - Application-level encryption for candidate PII
+  - Candidate email and name are stored in plain text in Firestore
+
+  [Recommendation] Encrypt candidate email with AES-256 using a KMS-managed
+  key before storing in Firestore. Decrypt only when needed by authorized
+  recruiter requests.
+
+PRIVACY CONSIDERATIONS
+  1. Candidates are subject to real-time behavioral monitoring (face detection,
+     gaze tracking, audio analysis) without detailed disclosure of what
+     specifically is monitored beyond "AI Proctoring Active."
+  
+  2. The consent form does not specify the data retention period or how
+     candidate data will be used after the session.
+  
+  3. There is no right-to-deletion mechanism for candidates.
+  
+  4. There is no privacy policy document linked from the application.
+  
+  [Recommendation] Implement GDPR/DPDP compliance features:
+  - Right to access: candidates can request their data
+  - Right to deletion: candidates can request erasure
+  - Privacy policy linked from consent form
+  - Data processing agreement for recruiters
+
+DATA CLASSIFICATION TABLE
+---------------------------
+| Classification | Data                              | Protection Level |
+|----------------|-----------------------------------|-----------------|
+| CRITICAL        | Firebase Admin private key        | Vault/KMS       |
+| CRITICAL        | SMTP credentials                  | Vault/KMS       |
+| HIGH            | Candidate email address           | Encrypted at app|
+| HIGH            | Session behavioral data           | Access-scoped   |
+| HIGH            | Post-session reports              | Auth-required   |
+| MEDIUM          | Candidate name, role              | Access-scoped   |
+| MEDIUM          | Trust scores                      | Auth-required   |
+| LOW             | Session timestamps                | Standard        |
+| LOW             | Room metadata (status)            | Standard        |
+
+================================================================================
+13. SECRETS MANAGEMENT
+================================================================================
+
+ENVIRONMENT VARIABLES ANALYSIS
+  Source: README.md "Environment Variables" section
+
+  CLIENT-SIDE (NEXT_PUBLIC_ prefix — exposed to browser):
+    NEXT_PUBLIC_FIREBASE_API_KEY        — Firebase Web API key
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN    — Firebase Auth domain
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID     — Firebase project identifier
+    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET — Firebase Storage bucket
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID — FCM sender ID
+    NEXT_PUBLIC_FIREBASE_APP_ID         — Firebase App ID
+  
+  NOTE: NEXT_PUBLIC_ variables are embedded in client-side JavaScript bundles.
+  The Firebase API key is intended to be public (it identifies the project, not
+  a secret). Firebase Security Rules are the actual protection layer.
+  Firestore rules must be correctly configured to prevent abuse.
+
+  SERVER-SIDE (never sent to browser):
+    FIREBASE_ADMIN_PROJECT_ID     — Firebase project ID (server use)
+    FIREBASE_ADMIN_PRIVATE_KEY    — RSA private key for Firebase Admin SDK
+    FIREBASE_ADMIN_CLIENT_EMAIL   — Service account email
+    SMTP_HOST                     — Email server hostname
+    SMTP_PORT                     — Email server port
+    SMTP_USER                     — SMTP username
+    SMTP_PASS                     — SMTP password/app password
+    SMTP_FROM                     — From address for OTP emails
+
+  CRITICAL: FIREBASE_ADMIN_PRIVATE_KEY
+    This is a full RSA private key granting complete access to the Firebase
+    project (read/write to Firestore, manage Auth users). Its compromise
+    would result in:
+    - Complete access to all recruiter accounts
+    - Complete access to all candidate data
+    - Ability to create admin tokens for any user
+    
+    The private key is stored in Vercel environment variables (encrypted at rest)
+    and parsed with .replace(/\\n/g, "\n") at runtime.
+
+CURRENT STATE ASSESSMENT
+  + Private keys are not committed to GitHub (.env* gitignored)
+  + Server-side secrets correctly separate from client-side config
+  + Vercel environment variables encrypt secrets at rest
+  - No secret rotation policy exists
+  - SMTP uses Gmail "service" mode without OAuth2 — app password likely
+  - No audit log of secret access in Vercel
+
+RECOMMENDED SECRET STORAGE
+  Production:
+    FIREBASE_ADMIN_PRIVATE_KEY → Vercel Environment Variables (Encrypted)
+    SMTP_PASS → Vercel Environment Variables (Encrypted)
+  
+  For Higher Security:
+    Consider Google Secret Manager or HashiCorp Vault for the Admin private key.
+    Rotate Firebase service account keys quarterly.
+    Use Gmail OAuth2 SMTP instead of username/password.
+
+ROTATION POLICY (Recommended)
+  | Secret                        | Rotation Frequency |
+  |-------------------------------|--------------------|
+  | FIREBASE_ADMIN_PRIVATE_KEY    | Quarterly          |
+  | SMTP_PASS                     | Quarterly          |
+  | Firebase Web API Key          | Annually           |
+  | Firebase App ID               | Only on compromise |
+
+================================================================================
+14. ERROR HANDLING STRATEGY
+================================================================================
+
+CURRENT ERROR HANDLING IMPLEMENTATION
+  - src/lib/api.ts: Consistent apiSuccess/apiError/apiValidationError helpers
+  - src/app/error.tsx: Next.js error boundary (client-side)
+  - src/components/GlobalErrorCatcher.tsx: window.onerror + unhandledrejection
+  - API routes: try/catch blocks with console.error logging
+
+COMPLETE ERROR HANDLING GUIDE
+-------------------------------
+
+ERROR: AUTHENTICATION FAILURE (401)
+  Cause: Missing or invalid Firebase ID token in Authorization header
+  User-facing message: "Your session has expired. Please sign in again."
+  Internal log: "AUTH_FAILURE: verifyIdToken failed for request to {route}"
+  Severity: MEDIUM
+  Recovery: Redirect user to login page. Clear stale token from SDK.
+
+ERROR: AUTHORIZATION FAILURE (403)
+  Cause: Authenticated user attempting to access another user's resource
+  User-facing message: "You don't have permission to access this resource."
+  Internal log: "AUTHZ_FAILURE: uid={uid} attempted access to room={roomId}"
+  Severity: HIGH (potential malicious intent)
+  Recovery: Return 403. Log the attempt for security monitoring.
+
+ERROR: VALIDATION FAILURE (422)
+  Cause: Input data fails Zod schema validation
+  User-facing message: "Invalid data submitted. Please check your input."
+  Internal log: Zod error flatten (field-level errors)
+  Severity: LOW
+  Recovery: Return structured validation errors. Do not expose schema details.
+
+ERROR: OTP EXPIRED (400)
+  Cause: OTP submitted after 10-minute window
+  User-facing message: "This code has expired. Please request a new one."
+  Internal log: "OTP_EXPIRED: email={email}, expiredAt={timestamp}"
+  Severity: LOW
+  Recovery: Guide user to re-trigger OTP send.
+
+ERROR: OTP ALREADY USED (400)
+  Cause: OTP submitted a second time after already consumed
+  User-facing message: "This code has already been used."
+  Internal log: "OTP_REPLAY: email={email}, attempted at {timestamp}"
+  Severity: MEDIUM (possible replay attack)
+  Recovery: Return 400. Alert security team if repeated replay attempts.
+
+ERROR: INVALID OTP (400)
+  Cause: OTP hash does not match stored hash
+  User-facing message: "Invalid code. Please check and try again."
+  Internal log: "OTP_MISMATCH: email={email}, attempt={n}"
+  Severity: HIGH (after 3+ attempts — possible brute force)
+  Recovery: Increment attempt counter. Lock after 5 attempts.
+
+ERROR: FIRESTORE UNAVAILABLE (503)
+  Cause: Firebase/Firestore service outage
+  User-facing message: "Service temporarily unavailable. Please try again in a moment."
+  Internal log: "FIRESTORE_ERROR: {error.code} {error.message}"
+  Severity: CRITICAL
+  Recovery: Return 503. Implement retry with exponential backoff in critical paths.
+
+ERROR: WEBRTC NEGOTIATION FAILURE (Client)
+  Cause: ICE negotiation failure, network issue, TURN server unavailable
+  User-facing message: "Could not connect. Try refreshing or switching networks."
+  Internal log: Console.error in useWebRTC (currently verbose debug logging)
+  Severity: MEDIUM
+  Recovery: Show retry button. Cleanup stale Firestore signal data.
+
+ERROR: NETWORK FAILURE (Client)
+  Cause: User's internet connection dropped
+  User-facing message: "Connection lost. Please check your network."
+  Severity: LOW
+  Recovery: WebRTC handles reconnection automatically for minor drops.
+
+ERROR: WEBRTC MEDIA DENIED (Client — "denied" state)
+  Cause: User denied camera/microphone browser permission
+  User-facing message: "Camera and microphone access required. Please allow in browser settings."
+  Severity: LOW
+  Recovery: Show browser-specific permission instructions. Retry button.
+
+ERROR: OTP EMAIL SEND FAILURE (500)
+  Cause: SMTP server unavailable, invalid credentials, email bounce
+  User-facing message: "Failed to send the code. Please try again."
+  Internal log: "SMTP_ERROR: {error.message} for email={email}"
+  Severity: HIGH
+  Recovery: Log SMTP error. Do NOT reveal SMTP details to user.
+  
+  CURRENT ISSUE: src/app/api/auth/otp/send/route.ts sends email AFTER storing
+  OTP in Firestore. If email send fails, OTP is stored but undelivered.
+  Stale OTP document blocks future attempts for that email.
+  [Recommendation] Store OTP AFTER successful email delivery, not before.
+
+ERROR: RATE LIMIT EXCEEDED (429)
+  Cause: Too many requests from a single source
+  User-facing message: "Too many attempts. Please wait before trying again."
+  Internal log: "RATE_LIMIT: endpoint={route} source={ip}"
+  Severity: MEDIUM
+  Recovery: Return 429 with Retry-After header. Do NOT reveal limit details.
+
+ERROR: SERVER INTERNAL ERROR (500)
+  Cause: Unhandled exception in API route
+  User-facing message: "An unexpected error occurred. Our team has been notified."
+  Internal log: Full error with stack trace to centralized logging service
+  Severity: HIGH
+  
+  CURRENT ISSUE: error.tsx exposes raw error.message to the user.
+  This can leak internal path names, function names, or stack frames.
+  [Recommendation] Use a generic message in production. Log full error server-side.
+
+================================================================================
+15. ABUSE PREVENTION
+================================================================================
+
+RECOMMENDED RATE LIMITS
+-------------------------
+| Endpoint                              | Limit               | Window    |
+|---------------------------------------|---------------------|-----------|
+| POST /api/auth/otp/send               | 3 per email         | 10 min    |
+| POST /api/auth/otp/verify             | 5 per email         | 10 min    |
+| POST /api/rooms                       | 20 per recruiter    | 24 hours  |
+| POST /api/rooms/[id]/candidate        | 3 per room          | 24 hours  |
+| POST /api/rooms/[id]/alerts           | 100 per room        | Per session|
+| POST /api/rooms/[id]/trust            | 1 per 10 seconds    | Per room   |
+| POST /api/rooms/[id]/session/start    | 1 per room          | Lifetime  |
+| POST /api/rooms/[id]/session/end      | 2 per room          | Lifetime  |
+| POST /api/rooms/[id]/report           | 3 per room          | 24 hours  |
+| All API routes                        | 1000 per IP         | 1 hour    |
+
+SPAM PROTECTION
+  Risk: The OTP send endpoint can be used to spam any email address with
+  GetAWay-branded OTP emails.
+  [Recommendation] Verify email exists in Firebase Auth BEFORE sending OTP.
+  This prevents the endpoint from being used as a spam tool for non-users.
+
+BRUTE FORCE PROTECTION
+  Risk: OTP verify endpoint — 6-digit code = 1,000,000 combinations.
+  Without rate limiting, brute force takes seconds.
+  [Recommendation] Implement per-email attempt counters in Redis/Vercel KV.
+  Lock after 5 failed attempts. Send alert email on lockout.
+
+OTP ABUSE
+  Risks: 
+  1. OTP flooding (send many OTPs to overwrite valid one)
+  2. OTP replay (use same code twice)
+  3. Race condition (two requests use same OTP simultaneously)
+  
+  Current State:
+  - Replay prevented (used: true flag)
+  - Flooding not prevented (new send overwrites old OTP document)
+  - Race condition possible (no atomic transaction on verify+mark-used)
+  
+  [Recommendation] Use Firestore transactions for OTP verify+mark-used.
+  Add document TTL and rate limiting for OTP sends.
+
+ROOM ID ENUMERATION
+  Risk: 9,000 possible room IDs — exhaustive scanning in minutes.
+  [Recommendation] Change to 128-bit random room IDs.
+  Consider returning a generic 404 (not "Room not found") to avoid confirming
+  that room IDs exist.
+
+CREDENTIAL STUFFING
+  Risk: Attackers use leaked email/password lists against Firebase Auth login.
+  Firebase Auth has built-in brute-force protection but it can be tuned.
+  [Recommendation] Enable Firebase Auth's advanced security features:
+  - reCAPTCHA Enterprise integration
+  - App Check for Firebase (blocks unauthorized clients)
+  - Identity Platform for enterprise-grade login protection
+
+API ABUSE (General)
+  Risk: No API abuse prevention exists across any endpoint.
+  [Recommendation]:
+  1. Implement Vercel middleware with rate limiting (e.g., @upstash/ratelimit)
+  2. Add Firebase App Check to require valid client certificates
+  3. Monitor for anomalous request patterns via Vercel analytics
+
+DENIAL OF SERVICE
+  Risk: Large volume of WebRTC session creation, Firestore writes to open
+  subcollections, or SMTP OTP spam could degrade service.
+  [Recommendation]:
+  1. Set Firestore document write quotas per room
+  2. Implement WAF (Web Application Firewall) via Cloudflare if using custom domain
+  3. Enable Vercel protection rules for DDoS mitigation
+
+================================================================================
+16. MONITORING & INCIDENT RESPONSE
+================================================================================
+
+WHAT SHOULD BE MONITORED
+--------------------------
+1. AUTHENTICATION EVENTS
+   - Failed login attempts (> 5 from same IP in 10 minutes)
+   - Successful password resets (notify recruiter via email)
+   - OTP generation requests (spike indicates abuse)
+   - New recruiter signups
+
+2. API ANOMALIES
+   - Unauthenticated requests to protected routes
+   - Requests with invalid/expired tokens
+   - Requests with unusual room IDs (sequential enumeration pattern)
+   - High-frequency writes to trust/alerts collections
+
+3. FIRESTORE ACTIVITY
+   - Writes to rooms from unexpected IPs
+   - Mass reads of candidate data
+   - Writes to ended room documents
+
+4. WEBRTC
+   - Signaling data written without corresponding active room
+   - Multiple simultaneous signaling sessions on same room
+
+5. EMAIL/OTP
+   - OTP send rate per email (> 3 in 10 minutes = abuse)
+   - SMTP errors and bounces
+
+CRITICAL ALERTS
+----------------
+| Alert                                     | Priority | Response Time |
+|-------------------------------------------|----------|---------------|
+| Firebase Admin key accessed from new IP   | P0       | Immediate     |
+| Multiple OTP brute force attempts         | P0       | Immediate     |
+| Room enumeration pattern detected         | P1       | < 1 hour      |
+| Firestore rules update                    | P1       | < 1 hour      |
+| SMTP credentials failure                  | P2       | < 4 hours     |
+| Webhook SSRF attempt detected             | P1       | < 1 hour      |
+
+SECURITY LOGGING REQUIREMENTS
+-------------------------------
+All security events should be logged with:
+  - Timestamp (ISO 8601, UTC)
+  - IP address of requester
+  - Route/endpoint accessed
+  - Authentication state (authenticated/anonymous)
+  - User ID (if authenticated)
+  - Request outcome (success/failure/blocked)
+  - Error code (if applicable)
+
+AUDIT TRAIL REQUIREMENTS
+  The following events require immutable audit logs:
+  - Password reset completions
+  - Room creation and deletion
+  - Session start and end
+  - Report compilation
+  - Settings changes (especially webhook URL)
+  - Consent acceptance by candidates
+
+RECOMMENDED TOOLS
+------------------
+  Vercel:
+    - Vercel Analytics — request logs, performance metrics
+    - Vercel Log Drains — stream logs to external SIEM
+    - Vercel Protection — rate limiting, bot protection
+
+  Firebase:
+    - Firebase Console → Firestore Usage tab
+    - Firebase App Check — enforce client identity
+    - Google Cloud Audit Logs — Firestore access audit trail
+
+  Error Monitoring:
+    [Recommendation] Sentry.io
+      - Capture all unhandled exceptions in API routes
+      - Source maps for readable stack traces
+      - Performance monitoring
+      - Integration: npm install @sentry/nextjs
+
+  Uptime Monitoring:
+    [Recommendation] Better Uptime or UptimeRobot
+      - Monitor /api/analytics (requires auth — use synthetic monitoring)
+      - Alert on > 2% error rate or > 2 second response time
+
+================================================================================
+17. EDGE CASES & FAILURE SCENARIOS
+================================================================================
+
+SCENARIO 1: CANDIDATE CLOSES TAB MID-INTERVIEW
+  Expected Behavior: WebRTC connection drops. Interviewer sees "disconnected" state.
+  Current Implementation: hangup() called on component unmount. cleanupSignal()
+    NOT called by candidate (only called by interviewer on leave).
+  Recovery Strategy: Interviewer should be able to share the link again. Candidate
+    can rejoin if room is still ACTIVE. WebRTC renegotiation should restart.
+  User Experience Gap: No alert to interviewer that candidate disconnected.
+  [Recommendation] Use Firestore presence to detect candidate disconnection.
+    Show "Candidate disconnected" banner in InterviewerView.
+
+SCENARIO 2: RECRUITER DISCONNECTS (INTERVIEWER LEAVES)
+  Expected Behavior: WebRTC connection drops. Candidate sees "failed" state.
+  Current Implementation: cleanupSignal() called on leave. Candidate's useWebRTC
+    detects disconnection via onconnectionstatechange → "failed" state.
+  Recovery Strategy: LiveRoomStep shows "Retry" button.
+  Gap: Session state in Firestore remains "ACTIVE" — not automatically ended.
+  [Recommendation] Detect interviewer disconnect server-side (e.g., via presence
+    system) and auto-end the session.
+
+SCENARIO 3: WEBRTC NEGOTIATION FAILS (ICE FAILURE)
+  Expected Behavior: useWebRTC sets connectionState to "failed".
+  Current Implementation: LiveRoomStep and InterviewerView show error UI with Retry.
+  Recovery Strategy: User clicks Retry → window.location.reload().
+  Gap: Stale ICE candidates in Firestore may cause re-negotiation to fail again.
+  [Recommendation] On retry, trigger cleanupSignal() before restarting.
+
+SCENARIO 4: FIRESTORE UNAVAILABLE
+  Expected Behavior: All API routes return 503. WebRTC signaling fails silently.
+  Current Implementation: No explicit Firestore outage handling. Errors caught by
+    API try/catch and return 500.
+  User Experience: Candidate or recruiter sees "Something went wrong" error page.
+  [Recommendation] Detect Firestore unavailability and show "Service temporarily
+    unavailable" with status page link. Implement Firestore retry logic.
+
+SCENARIO 5: DUPLICATE OTP REQUESTS (Race Condition)
+  Expected Behavior: One OTP is valid; others are overwritten.
+  Current Implementation: Each OTP send overwrites otpCodes/{email}. If two
+    requests arrive simultaneously, the last write wins. The email with the
+    first OTP becomes invalid.
+  Recovery Strategy: User receives second email with valid OTP. First email's
+    code will fail with "Invalid OTP."
+  [Recommendation] Use Firestore transactions for OTP creation. Reject new OTP
+    if one is already active and unexpired.
+
+SCENARIO 6: EXPIRED ROOM LINK
+  Expected Behavior: Candidate with old link should see "Session ended" page.
+  Current Implementation: No room status check at page load. Candidate can
+    proceed through onboarding even if room.status == "ENDED."
+  [Recommendation] Check room status in CandidateFlow on mount. If status is
+    "ENDED," redirect to a "Session has ended" page.
+
+SCENARIO 7: DELETED ROOM ACCESS
+  Expected Behavior: 404 page for invalid room IDs.
+  Current Implementation: DELETE route requires auth (correct). But if room
+    doesn't exist, /api/rooms/[id]/candidate returns 404. Interview page
+    doesn't check for room existence at page load — it renders the onboarding
+    form regardless.
+  [Recommendation] Server-side check room existence before rendering interview
+    page. Return 404 with "This interview room no longer exists."
+
+SCENARIO 8: MULTIPLE CANDIDATES JOIN SAME ROOM
+  Expected Behavior: Only one candidate should be in a room at a time.
+  Current Implementation: No enforcement. Multiple browsers can go through
+    CandidateFlow for the same room ID.
+  Impact: WebRTC signaling gets corrupted (multiple parties write to same
+    signal/data document). The later joiner overwrites the earlier one.
+  [Recommendation] Check rooms.candidate field at onboarding submit. If
+    candidate != null, reject with "A candidate has already joined this room."
+
+SCENARIO 9: OTP SEND SUCCEEDS BUT EMAIL DELIVERY FAILS
+  Expected Behavior: Graceful failure with retry option.
+  Current Implementation: OTP is stored in Firestore BEFORE email is sent.
+    If email send fails, OTP document exists but email was never delivered.
+    Next OTP request overwrites the document — the original OTP is inaccessible.
+  [Recommendation] Reverse the order: attempt email send first. Only store
+    OTP document in Firestore after successful email delivery.
+
+SCENARIO 10: TRUST SCORE GOES TO 0 DURING SESSION
+  Expected Behavior: Alert fires, recruiter is notified.
+  Current Implementation: If score < recruiter threshold, an alert is created.
+    No special handling for score == 0 (complete loss of trust).
+  [Recommendation] Add a configurable "session termination threshold." If trust
+    score drops to 0 (or configurable floor), automatically end session and
+    notify recruiter via webhook.
+
+SCENARIO 11: WEBHOOK DELIVERY FAILURE
+  Expected Behavior: Session end is not blocked by webhook failure.
+  Current Implementation: Webhook is fire-and-forget (.catch(() => {})). Session
+    end always returns success regardless of webhook outcome.
+  Gap: Recruiter has no visibility into webhook delivery failure.
+  [Recommendation] Log webhook delivery outcomes. Implement retry with backoff.
+    Notify recruiter in dashboard if webhook consistently fails.
+
+SCENARIO 12: INTERVIEW PAGE ACCESSED WITHOUT ROOM ID
+  Expected Behavior: Redirect or error page.
+  Current Implementation: Next.js dynamic route (/interview/[roomId]) requires
+    roomId parameter. If navigated to /interview/ without ID, Next.js returns 404.
+  Assessment: HANDLED by Next.js routing.
+
+================================================================================
+18. SECURITY HARDENING CHECKLIST
+================================================================================
+
+CRITICAL (Must fix before any real-user production launch)
+----------------------------------------------------------
+[C-1] ROOM ID ENTROPY
+  Replace "GW-{4-digit}" format with UUID v4 or 128-bit random hex.
+  File: src/app/api/rooms/route.ts — generateRoomId() function
+  
+[C-2] PROTECT UNAUTH CANDIDATE/SESSION WRITE APIS
+  Add authentication or session token verification to:
+  - POST /api/rooms/[id]/candidate
+  - POST /api/rooms/[id]/alerts
+  - POST /api/rooms/[id]/trust
+  - POST /api/rooms/[id]/session/start
+  - POST /api/rooms/[id]/session/end
+  - POST /api/rooms/[id]/report
+
+[C-3] ADD NEXT.JS MIDDLEWARE AUTH GUARD
+  Create src/middleware.ts to:
+  - Redirect unauthenticated users from /recruiter/* to login
+  - Verify Firebase ID token in middleware for recruiter routes
+  
+[C-4] PROTECT INTERVIEWER VIEW
+  Verify Firebase auth when ?view=interviewer is present.
+  Confirm auth.uid == room.recruiterId before rendering InterviewerView.
+  File: src/app/interview/[roomId]/page.tsx
+
+[C-5] FIRESTORE RULES: SUBCOLLECTION LOCKDOWN
+  Close open subcollections (alerts, trustLogs, report, webrtc).
+  Implement recommended Firestore rules from Section 7.
+
+[C-6] OTP RATE LIMITING
+  Add rate limiting to /api/auth/otp/send and /api/auth/otp/verify.
+  Implement: max 3 sends per email/10min, max 5 verify attempts per email/10min.
+
+[C-7] REPLACE MOCK STORE IN PRODUCTION FLOWS
+  The mockStore (Zustand in-memory) is used for all recruiter dashboard pages.
+  It does not persist across devices or browser tabs.
+  Replace with real Firestore API calls for rooms, sessions, and reports.
+
+[C-8] CRYPTOGRAPHIC OTP GENERATION
+  Replace Math.random() with crypto.randomBytes() for OTP generation.
+  File: src/app/api/auth/otp/send/route.ts — line 18
+
+HIGH (Should fix before launch, or immediately after MVP)
+---------------------------------------------------------
+[H-1] WEBHOOK SSRF PROTECTION
+  Validate webhook URL before storing (PUT /api/settings).
+  Block RFC1918 addresses: 10.x, 172.16-31.x, 192.168.x
+  Block loopback: 127.x, ::1
+  Validate URL points to an allowed external domain.
+
+[H-2] CANDIDATE PII ACCESS CONTROL
+  GET /api/rooms/[id]/candidate must require recruiter authentication.
+  Firestore rules must restrict rooms/{id} reads to room owners.
+
+[H-3] OTP EMAIL ORDERING FIX
+  Store OTP document AFTER successful email delivery, not before.
+  File: src/app/api/auth/otp/send/route.ts
+
+[H-4] SECURITY HTTP HEADERS
+  Add to next.config.ts:
+  - Content-Security-Policy
+  - X-Frame-Options: DENY
+  - X-Content-Type-Options: nosniff
+  - Referrer-Policy: strict-origin-when-cross-origin
+  - Permissions-Policy (restrict camera/mic to same-origin)
+  - Strict-Transport-Security (HSTS)
+
+[H-5] ERROR MESSAGE SANITIZATION
+  Do not expose error.message directly to users in error.tsx.
+  Log full error server-side. Show generic message to user in production.
+
+[H-6] DEDICATED TURN SERVER
+  Replace openrelay.metered.ca with a private TURN server.
+  Generate time-limited TURN credentials per session.
+
+[H-7] CONSENT PERSISTENCE
+  Record candidate consent with timestamp and IP to Firestore.
+  Include full consent text in stored record.
+
+[H-8] REMOVE VERBOSE CONSOLE LOGGING
+  Remove or gate extensive console.log statements in useWebRTC.ts.
+  Use environment-aware logging (only in development).
+
+MEDIUM (Fix within 30 days of launch)
+--------------------------------------
+[M-1] DATA RETENTION POLICY
+  Implement TTL for candidate data (90 days post-session).
+  Implement TTL for OTP codes (already partially done — verify in production).
+  Add Firestore TTL policy for webrtc signaling documents.
+
+[M-2] SINGLE CANDIDATE PER ROOM ENFORCEMENT
+  Check rooms.candidate == null before allowing POST /api/rooms/[id]/candidate.
+
+[M-3] ROOM STATUS VALIDATION
+  Check room.status in CandidateFlow before proceeding (redirect if ENDED).
+  Check room.status in session start/end/trust/alerts APIs.
+
+[M-4] WEBHOOK SIGNATURE
+  Add HMAC-SHA256 signature to webhook payloads.
+  Document the signature header for recruiter webhook receivers.
+
+[M-5] PRIVACY POLICY & CONSENT
+  Add privacy policy page accessible from consent form.
+  Update consent text to specify data retention and processing purpose.
+
+[M-6] API RATE LIMITING (All Routes)
+  Implement per-IP and per-recruiter rate limiting across all API routes.
+  Use @upstash/ratelimit with Vercel KV or Redis.
+
+LOW (Future improvements)
+--------------------------
+[L-1] FIREBASE APP CHECK
+  Enable Firebase App Check with reCAPTCHA Enterprise.
+  Prevents unauthorized apps from accessing Firebase services.
+
+[L-2] SENTRY INTEGRATION
+  Add @sentry/nextjs for error tracking and performance monitoring.
+
+[L-3] FIRESTORE AUDIT LOGS
+  Enable Google Cloud Audit Logs for Firestore data access logging.
+
+[L-4] MULTI-FACTOR AUTHENTICATION (MFA)
+  Add TOTP-based MFA for recruiter accounts.
+
+================================================================================
+19. SECURITY ROADMAP
+================================================================================
+
+PHASE 1 — MVP HARDENING (Before any real users)
+-------------------------------------------------
+Priority: All CRITICAL items from Section 18.
+
+Timeline: 1-2 weeks
+
+Key Deliverables:
+  1. Cryptographically random room IDs (UUID v4)
+  2. Next.js middleware auth guard for /recruiter/* routes
+  3. Interviewer view authentication check
+  4. OTP rate limiting (max 5 attempts/email)
+  5. Firestore rules locked down (subcollections server-only)
+  6. Real Firestore API calls replacing mockStore
+  7. crypto.randomBytes() for OTP generation
+  8. Security HTTP headers (CSP, X-Frame-Options)
+
+Estimated Impact: Production readiness score improves from 3.5 → 6.5/10
+
+PHASE 2 — GROWTH HARDENING (First 3 months post-launch)
+---------------------------------------------------------
+Priority: All HIGH items from Section 18 + MFA.
+
+Timeline: 3-6 weeks after Phase 1
+
+Key Deliverables:
+  1. Private TURN server deployment (Coturn on DigitalOcean/AWS)
+  2. Webhook SSRF protection and HMAC signing
+  3. Candidate consent persistence with audit trail
+  4. Sentry.io error monitoring integration
+  5. Data retention policy implementation
+  6. Privacy policy page and updated consent form
+  7. Single candidate per room enforcement
+  8. API rate limiting (Upstash/Vercel KV)
+
+Future Improvements:
+  - Email verification for candidate email at onboarding
+  - Device fingerprinting for session continuity
+  - Suspicious connection detection (multiple IPs in one session)
+
+Estimated Impact: Production readiness score improves to 8.0/10
+
+PHASE 3 — ENTERPRISE GRADE (6-12 months)
+-----------------------------------------
+Priority: Advanced security features for enterprise customers.
+
+Key Deliverables:
+  1. Multi-Factor Authentication (TOTP/SMS) for recruiter accounts
+  2. Enterprise SSO (SAML/OAuth) for corporate recruiter teams
+  3. Identity verification for candidates (government ID check)
+  4. Compliance controls: GDPR, DPDP (India), SOC 2 Type II preparation
+  5. Advanced audit logs with tamper-proof storage
+  6. Candidate data deletion API (right to erasure)
+  7. AI narrative report generation (LLM integration)
+  8. Advanced audio diarization (multi-speaker detection)
+  9. Recruiter team permissions (multiple recruiters per organization)
+  10. Firebase App Check for client authentication
+
+Future Improvements:
+  - ISO 27001 certification preparation
+  - Penetration testing by external security firm
+  - Bug bounty program
+  - Data Processing Agreements (DPA) for enterprise clients
+  - Encrypted candidate data at application layer (AES-256 + KMS)
+
+================================================================================
+20. FINAL SECURITY ASSESSMENT
+================================================================================
+
+PRODUCTION READINESS SCORE: 3.5 / 10
+
+This score reflects that GetAWay has a functional, well-designed architecture
+with correct security for recruiter-facing data, but has significant gaps in
+the candidate/session API layer that make it unsuitable for real hiring
+workflows without immediate remediation.
+
+MAJOR BLOCKERS (Must fix before real users)
+--------------------------------------------
+1. WEAK ROOM IDS: 9,000 possible values — enumerable in 90 seconds.
+   All session security depends on room ID confidentiality.
+
+2. NO API AUTHENTICATION ON SESSION WRITES: Trust scores, alerts, and
+   candidate data can be written by anyone on the internet.
+
+3. NO RECRUITER DASHBOARD PROTECTION: Any URL visitor can access
+   /recruiter/overview without authentication (UI only protection).
+
+4. INTERVIEWER VIEW IS PUBLIC: Any person with a room ID can claim
+   the interviewer role by adding ?view=interviewer.
+
+5. NO OTP RATE LIMITING: Account takeover via brute force is trivial.
+
+6. MOCK STORE IN PRODUCTION PATH: Data is lost on browser refresh
+   across devices — the application cannot function reliably for real sessions.
+
+TOP 10 SECURITY IMPROVEMENTS (Priority Order)
+----------------------------------------------
+1. Implement Next.js middleware.ts with Firebase token verification for
+   all /recruiter/* routes. This single change eliminates unauthorized
+   recruiter dashboard access.
+
+2. Change room ID generation to UUID v4 / 128-bit random hex.
+   This eliminates the room enumeration attack surface.
+
+3. Add authentication to session-write API routes (alerts, trust,
+   candidate, session start/end). Use session tokens or JWT for
+   unauthenticated participants.
+
+4. Add rate limiting to OTP endpoints (send: 3/10min, verify: 5/10min).
+   Implement account lockout after 5 failed OTP attempts.
+
+5. Lock down Firestore subcollections. Change alerts, trustLogs, report,
+   and webrtc from allow read, write: if true to server-only writes.
+
+6. Fix crypto: Replace Math.random() OTP generation with
+   crypto.randomBytes() for cryptographically secure OTPs.
+
+7. Add HTTP security headers (CSP, HSTS, X-Frame-Options) in next.config.ts
+   to prevent clickjacking, content injection, and MITM attacks.
+
+8. Replace mockStore with real Firestore API calls in all recruiter pages
+   so that session data persists reliably across devices and sessions.
+
+9. Validate and sanitize webhook URL on write to prevent SSRF.
+   Block RFC1918 addresses in the webhook URL field.
+
+10. Replace public TURN server (openrelay.metered.ca) with a private,
+    authenticated TURN server to protect media relay traffic.
+
+RECOMMENDED NEXT ACTIONS
+-------------------------
+Immediate (This Week):
+  A. Add src/middleware.ts for recruiter route protection
+  B. Replace generateRoomId() with UUID v4 (npm install uuid)
+  C. Add rate limiting to OTP routes (use @upstash/ratelimit)
+  D. Fix crypto.randomBytes() for OTP generation
+
+Short Term (Next 2 Weeks):
+  E. Implement Firestore rules from Section 7 (recommended rules)
+  F. Add security headers to next.config.ts
+  G. Fix OTP email ordering (email first, then store)
+  H. Add interviewer auth check in interview/[roomId]/page.tsx
+
+Before Go-Live:
+  I. Replace all mockStore usage with real Firestore API calls
+  J. Implement webhook SSRF protection
+  K. Add Sentry.io for production error monitoring
+  L. Deploy private TURN server
+
+CLOSING NOTE FOR FOUNDERS AND DEVELOPERS
+-----------------------------------------
+GetAWay has an excellent foundation. The Firebase + Next.js + WebRTC
+architecture is sound. The authentication model for recruiters is correctly
+implemented. The OTP hashing approach is a security best practice.
+
+The gaps identified in this document are primarily around the candidate-facing
+and session APIs, which were built with the intentional design choice of
+"no authentication for candidates to reduce friction." This is a valid product
+decision for a final-year project, but it creates real security risks for
+production deployment.
+
+The good news: most critical issues can be fixed in 1-2 weeks of focused
+engineering work, primarily by:
+  1. Adding middleware
+  2. Increasing room ID entropy
+  3. Adding rate limiting
+  4. Locking Firestore rules
+
+Once these four items are addressed, GetAWay will be significantly more secure
+and suitable for real-world use in controlled hiring environments.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

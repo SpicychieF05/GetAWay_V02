@@ -1,0 +1,122 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ─── Global Safety Net ───────────────────────────────────────────────────
+    // All paths default to DENY. Access is explicitly granted below.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ─── Helper functions ─────────────────────────────────────────────────────
+    function isSignedIn() { return request.auth != null; }
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+
+    // ─── Recruiter Profiles ───────────────────────────────────────────────────
+    // Security Architecture §7: "A recruiter document can ONLY be read or written
+    // by the recruiter whose Firebase UID matches the document ID."
+    // Required for authService.signUp() to write recruiters/{uid} on registration.
+    match /recruiters/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ─── Interview Rooms ──────────────────────────────────────────────────────
+    match /rooms/{roomId} {
+      // Ownership check: the recruiter who created the room.
+      function isRoomOwner() {
+        return isSignedIn() && existing().recruiterId == request.auth.uid;
+      }
+      // [PHASE 1] Candidate identity check — requires candidateUid written on join.
+      // Candidate Firestore access will be re-enabled in Phase 1 (Candidate Onboarding).
+      function isRoomCandidate() {
+        return isSignedIn() && existing().candidateUid == request.auth.uid;
+      }
+
+      // PHASE 0: Only the room owner can read.
+      // PHASE 1: Will re-add || isRoomCandidate() once candidate auth is implemented.
+      allow read: if isRoomOwner();
+
+      // Only the room owner can update room status (e.g., WAITING → ACTIVE → ENDED).
+      // Room creation and deletion are handled server-side via Admin SDK (bypasses rules).
+      allow update: if isRoomOwner() &&
+        incoming().diff(existing()).affectedKeys().hasAny(['status', 'updatedAt', 'trustScore']);
+      allow create, delete: if false; // Admin SDK only
+    }
+
+    // ─── Alerts (AI Monitoring) ───────────────────────────────────────────────
+    // Security Architecture §7: "Alerts: only room owner can read; AI system writes via Admin SDK."
+    match /rooms/{roomId}/alerts/{alertId} {
+      function isParentRoomOwner() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
+      }
+      function isParentRoomCandidate() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
+      }
+
+      // Only the room owner (recruiter) can read alerts.
+      allow read: if isParentRoomOwner();
+      // Candidates can write alerts (AI-generated events in their browser).
+      // [PHASE 2] This will be restricted to server-side Admin SDK writes only.
+      allow create: if isParentRoomCandidate();
+      allow update, delete: if false; // Alerts are immutable once written.
+    }
+
+    // ─── WebRTC Signaling (Offer / Answer) ────────────────────────────────────
+    // Both the recruiter (caller) and candidate (callee) need read/write access
+    // during the SDP negotiation phase.
+    // [PHASE 1] Will tighten once candidateUid is set on join.
+    match /rooms/{roomId}/webrtc/{nodeId} {
+      function isParentRoomOwner() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
+      }
+      function isParentRoomCandidate() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
+      }
+
+      allow read: if isParentRoomOwner() || isParentRoomCandidate();
+      allow create, update: if isParentRoomOwner() || isParentRoomCandidate();
+      allow delete: if isParentRoomOwner();
+    }
+
+    // ─── ICE Candidates: Caller (Recruiter → Candidate) ──────────────────────
+    match /rooms/{roomId}/callerCandidates/{candidateId} {
+      function isParentRoomOwner() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
+      }
+      function isParentRoomCandidate() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
+      }
+
+      allow read: if isParentRoomOwner() || isParentRoomCandidate();
+      allow create: if isParentRoomOwner(); // Only the recruiter writes caller ICE candidates.
+      allow update, delete: if false;
+    }
+
+    // ─── ICE Candidates: Callee (Candidate → Recruiter) ──────────────────────
+    // [PHASE 1] Currently requires candidateUid in the room document.
+    // Will be updated in Phase 1 when candidate anonymous auth is implemented.
+    match /rooms/{roomId}/calleeCandidates/{candidateId} {
+      function isParentRoomOwner() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
+      }
+      function isParentRoomCandidate() {
+        return isSignedIn() &&
+          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
+      }
+
+      allow read: if isParentRoomOwner() || isParentRoomCandidate();
+      allow create: if isParentRoomCandidate(); // Only the candidate writes callee ICE candidates.
+      allow update, delete: if false;
+    }
+  }
+}
+

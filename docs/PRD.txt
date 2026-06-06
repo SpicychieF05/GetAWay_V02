@@ -1,0 +1,574 @@
+Product Requirements Document (PRD)
+GetAWay
+Browser-Native AI-Proctored Interview Platform
+Version: 2.0 (Rebuild)
+
+1. Product Vision
+GetAWay aims to become the most accessible and trustworthy browser-based interview platform for technical recruitment.
+GetAWay emphasizes interview integrity more than traditional video conferencing tools by integrating multiple features.
+Live video interviews
+Browser-native participation
+AI-assisted behavioral monitoring
+Recruiter-focused trust insights
+Post-session integrity reporting
+The platform should allow recruiters to evaluate candidates with greater confidence while minimizing friction for candidates.
+
+2. Problem Statement
+Remote hiring has significantly increased across industries.
+However, recruiters face multiple challenges:
+Limited visibility during interviews
+Candidate impersonation risks
+External assistance during technical rounds
+Tab switching and distraction
+Lack of trustworthy integrity signals
+Dependence on generic video conferencing platforms
+Existing proctoring tools are often:
+Expensive
+Difficult to adopt
+Privacy invasive
+Installation heavy
+GetAWay solves these issues through browser-native participation and lightweight AI-assisted monitoring.
+
+3. Product Goals
+Primary Goals
+Enable browser-only interview participation
+Reduce candidate onboarding friction
+Improve recruiter confidence
+Generate useful interview integrity signals
+Deliver actionable post-session reports
+Secondary Goals
+Create reusable interview infrastructure
+Support future AI hiring workflows
+Provide analytics for recruiter decision making
+
+4. Target Users
+Recruiters
+Goals:
+Conduct trusted interviews
+Detect suspicious behavior
+Review post-session reports
+Track candidate integrity
+Pain Points:
+Interview cheating
+Lack of visibility
+Manual monitoring burden
+
+Hiring Managers
+Goals:
+Evaluate interview outcomes
+Review integrity data
+Pain Points:
+Inconsistent interview quality
+Limited verification mechanisms
+
+Candidates
+Goals:
+Join interviews quickly
+Complete interviews without installations
+Pain Points:
+Software downloads
+Complex setup
+Privacy concerns
+
+5. User Stories
+Recruiter
+As a recruiter,
+I want to create interview rooms
+So that candidates can join securely.
+
+As a recruiter,
+I want to view trust alerts in real time
+So that I can react during interviews.
+
+As a recruiter,
+I want a final interview report
+So that I can make informed hiring decisions.
+
+Candidate
+As a candidate,
+I want to join from a browser
+So that I do not need additional software.
+
+As a candidate,
+I want a simple onboarding flow
+So that I can start quickly.
+
+6. Core Features
+Recruiter Authentication
+Priority: Must Have
+Requirements:
+Email/password login
+Password reset
+Session persistence
+Role validation
+
+Interview Room Creation
+Priority: Must Have
+Requirements:
+Unique room ID generation
+Secure room links
+Room metadata storage
+Interview configuration
+
+Candidate Onboarding
+Priority: Must Have
+Requirements:
+Name
+Email
+Role
+Consent acceptance
+Validation required before entry.
+
+Browser-Native Live Interview
+Priority: Must Have
+Requirements:
+WebRTC communication
+Mic controls
+Camera controls
+Connection status
+
+AI Monitoring Layer
+Priority: Must Have
+Requirements:
+Face presence detection
+Attention monitoring
+Tab visibility tracking
+Audio anomaly detection
+Device compliance checks
+
+Live Alerts Feed
+Priority: Must Have
+Requirements:
+Alert categorization
+Timestamp logging
+Real-time updates
+
+Trust Score Engine
+Priority: Must Have
+Requirements:
+Starting score = 100
+Event-based deductions
+Recruiter configurable thresholds
+Low-score warnings
+
+Post Session Report
+Priority: Must Have
+Requirements:
+Event timeline
+Alert summary
+Trust trend chart
+Final score
+JSON export
+
+Recruiter Dashboard
+Priority: Must Have
+Requirements:
+Session list
+Session status
+Trust summary
+Report access
+
+7. AI Signal Definitions
+The system should support the following signal types.
+Face Missing
+Trigger:
+No face detected for X seconds.
+Impact:
+Trust score reduction.
+
+Multiple Faces
+Trigger:
+More than one face visible.
+Impact:
+High-severity alert.
+
+Tab Switch
+Trigger:
+Browser tab becomes inactive.
+Impact:
+Medium-severity alert.
+
+Audio Anomaly
+Trigger:
+Unexpected secondary voice or unusual noise.
+Impact:
+Medium-severity alert.
+
+Camera Disabled
+Trigger:
+Video stream interruption.
+Impact:
+High-severity alert.
+
+8. User Flow
+Recruiter Flow
+Login
+→ Dashboard
+→ Create Room
+→ Configure Settings
+→ Share Links
+→ Monitor Session
+→ Review Report
+→ Export Results
+
+Candidate Flow
+Open Link
+→ Enter Information
+→ Consent
+→ Device Check
+→ Join Interview
+→ Complete Session
+→ Thank You Page
+
+9. Data Model Overview
+Users
+Fields:
+userId
+email
+role
+createdAt
+
+Interview Rooms
+Fields:
+roomId
+recruiterId
+status
+trustScore
+createdAt
+
+Alerts
+Fields:
+alertId
+roomId
+type
+severity
+timestamp
+
+Reports
+Fields:
+reportId
+roomId
+finalScore
+timeline
+generatedAt
+
+10. Security Requirements
+Authentication
+Firebase Authentication
+
+Authorization
+Recruiters can only access their own rooms.
+
+Data Isolation
+No cross-tenant access.
+
+Encryption
+All communication via HTTPS.
+WebRTC secure channels enabled.
+
+11. Non-Functional Requirements
+Performance
+Interview room load time:
+< 5 seconds
+
+Availability
+Target:
+99% uptime
+
+Scalability
+Support:
+100+ concurrent interview rooms
+
+Reliability
+No data loss during session events.
+
+12. Analytics
+Metrics:
+Sessions created
+Sessions completed
+Average trust score
+Alert frequency
+Recruiter engagement
+
+13. Success Metrics
+Recruiter Activation Rate
+Target:
+60%
+
+Candidate Join Rate
+Target:
+85%
+
+Interview Completion Rate
+Target:
+90%
+
+Median Time To Connect
+Target:
+< 90 seconds
+
+14. Deliberately Excluded From V1
+ATS integrations
+Candidate accounts
+LLM-generated summaries
+Screen recording
+Mobile applications
+Calendar integrations
+Advanced voice diarization
+
+15. Risks & Assumptions
+Assumptions
+Users have modern browsers.
+Camera and microphone are available.
+Recruiters understand trust score limitations.
+Risks
+Browser permission denial.
+Network instability.
+False-positive monitoring events.
+Privacy concerns.
+
+16. Future Roadmap
+Phase 2
+Face verification
+Candidate identity matching
+Enhanced reporting
+Phase 3
+AI interview summarization
+ATS integrations
+Candidate scoring models
+
+Phase 4
+Enterprise hiring workflows
+Team collaboration
+Predictive hiring analytics
+
+17. Definition of Success
+GetAWay is successful when recruiters can:
+Create interviews in under 2 minutes
+Monitor interviews in real time
+Receive useful integrity signals
+Review structured reports
+Make more confident hiring decisions
+without requiring candidates to install software or create accounts.
+18. System Architecture Overview
+High-Level Architecture
+
+Recruiter Browser
+        │
+        ▼
+   Next.js Frontend
+        │
+        ▼
+ Firebase Authentication
+        │
+        ▼
+ Firestore Database
+        │
+        ├────────► Interview Rooms
+        │
+        ├────────► Trust Logs
+        │
+        ├────────► Alerts
+        │
+        └────────► Reports
+        │
+        ▼
+    WebRTC Layer
+        │
+        ▼
+ Candidate Browser
+Responsibilities
+Frontend
+UI rendering
+Interview experience
+Device checks
+AI signal generation
+Firebase
+Authentication
+Data persistence
+Signaling storage
+WebRTC
+Audio/video communication
+AI Layer
+Trust monitoring
+Event detection
+Alert generation
+
+19. Trust Score Engine Specification
+This section is extremely important.
+Without this, every future developer will implement trust differently.
+Initial Score
+Trust Score = 100
+
+Event Penalties
+Event
+Penalty
+Tab Switch
+-5
+Face Missing > 5s
+-10
+Multiple Faces
+-20
+Camera Disabled
+-25
+Audio Anomaly
+-10
+Permission Revoked
+-15
+
+
+Alert Levels
+Green
+80–100
+Normal behavior.
+
+Yellow
+60–79
+Minor concerns.
+
+Red
+0–59
+Significant suspicious behavior.
+
+Recruiter Threshold
+Recruiters can configure:
+Trust Alert Threshold
+Example:
+70
+When score drops below:
+70
+Generate alert.
+
+20. Device Readiness Requirements
+Before interview starts:
+Camera Check
+Verify:
+camera available
+camera active
+
+Microphone Check
+Verify:
+microphone available
+microphone active
+
+Browser Check
+Supported:
+Chrome
+Edge
+Partial Support:
+Firefox
+Not Recommended:
+Safari
+
+Network Check
+Minimum:
+2 Mbps upload
+2 Mbps download
+Recommended:
+5 Mbps+
+
+21. Event Logging Requirements
+Every important action should be stored.
+Example
+{
+ "eventType": "TAB_SWITCH",
+ "timestamp": "2026-06-18T12:30:12Z",
+ "roomId": "ABC123",
+ "severity": "medium",
+ "trustImpact": -5
+}
+
+Events To Log
+Room Created
+Candidate Joined
+Interview Started
+Interview Ended
+Tab Switch
+Face Missing
+Multiple Faces
+Audio Anomaly
+Camera Disabled
+Trust Threshold Reached
+
+22. API/Event Contract Definitions
+Even if you use Firebase instead of REST APIs.
+Document the events.
+Create Room
+Input:
+{
+ "title": "Frontend Interview",
+ "threshold": 70
+}
+Output:
+{
+ "roomId": "ABCD123",
+ "candidateLink": "...",
+ "interviewerLink": "..."
+}
+
+Join Room
+Input:
+{
+ "roomId": "ABCD123",
+ "name": "John Doe",
+ "email": "john@example.com"
+}
+Output:
+{
+ "status": "joined"
+}
+
+23. Privacy & Compliance
+This is missing from most student projects.
+Consent Requirements
+Candidates must explicitly consent before joining.
+
+Data Collection
+Collected:
+Name
+Email
+Role
+Monitoring Events
+Trust Logs
+
+Not Collected
+Screen recordings
+Keystrokes
+Local files
+Browser history
+
+Retention
+Recommended:
+90 Days
+Then:
+Auto Delete
+
+Final PRD Structure
+If I were building GetAWay v2 today, the final PRD structure would be:
+1. Product Vision
+2. Problem Statement
+3. Product Goals
+4. Target Users
+5. User Stories
+6. Core Features
+7. AI Signal Definitions
+8. User Flow
+9. Data Model Overview
+10. Security Requirements
+11. Non-Functional Requirements
+12. Analytics
+13. Success Metrics
+14. Deliberately Excluded From V1
+15. Risks & Assumptions
+16. Future Roadmap
+17. Definition of Success
+18. System Architecture Overview
+19. Trust Score Engine Specification
+20. Device Readiness Requirements
+21. Event Logging Requirements
+22. API/Event Contract Definitions
+23. Privacy & Compliance
+
+
+
+

@@ -1,0 +1,2472 @@
+Frontend Specification Document (FSD)
+GetAWay
+
+NOTE All specifications are derived from actual code. 
+Items labeled "Recommendation" or "Future Improvement" are not yet implemented yet, but should be implemented in this new version.
+
+Table of Contents
+Executive Summary
+Design Principles
+Brand Identity
+Color System
+Typography System
+Spacing System
+Layout System
+Design Tokens
+Component Library Specification
+Form Design Standards
+Iconography System
+Motion & Animation
+Accessibility Standards
+Page-by-Page Design Specification
+State Management & UI Data Flow
+Frontend Architecture
+API & Integration Specification
+Environment Variables Reference
+Future Design Recommendations
+Frontend Quality Checklist
+
+1. Executive Summary
+Product Purpose
+GetAWay is a browser-native, AI-powered interview proctoring platform that enables recruiters to conduct, monitor, and analyse live video interviews in real time. It uses WebRTC for P2P video, Firebase for real-time data, and browser-side AI to track trust signals — all without requiring any native installation.
+Target Users
+User
+Role
+Primary Surface
+Recruiter
+Creates rooms, monitors live sessions, reviews reports
+/recruiter/* dashboard
+Candidate
+Accepts invitation, completes onboarding, participates in interview
+/interview/[roomId]
+Interviewer
+Joins the same room URL with ?view=interviewer to see the live panel
+/interview/[roomId]?view=interviewer
+
+Design Goals
+Zero friction for candidates — join an interview with a link, no account needed.
+Power-dense recruiter dashboard — surface everything a recruiter needs without navigating away.
+Professional, trust-conveying aesthetics — a dark, glassmorphic UI that communicates credibility.
+Real-time fidelity — the UI must reflect live data (trust scores, alerts, connection state) instantly.
+No cognitive overload — every screen has a single primary action.
+User Experience Philosophy
+Browser-first: No downloads, no plugins, no native apps.
+Low friction for candidates: Room ID is the only credential. Three steps from link to live video.
+Recruiter-focused dashboard: Left-rail navigation, consistent content area, glassmorphic cards.
+Trust-oriented visual language: Green teal primary conveys integrity. Destructive red is reserved exclusively for warnings and errors.
+Professional minimalism: Dark background eliminates noise. Content speaks for itself.
+
+2. Design Principles
+1. Clarity Over Decoration
+Every UI element must earn its place. No decorative components that do not convey information. The glassmorphism aesthetic serves clarity — it creates visual layers without adding noise.
+Applied in code: glass-panel utility applies backdrop-blur-md and a subtle border-white/10 — giving depth without heavy decoration.
+
+2. Single Primary Action Per Screen
+Each page has one dominant action that does not compete with other interactive elements.
+Page
+Primary Action
+Overview
+— (read-only KPI view)
+Initialize
+"Generate Interview Room" button
+Sessions
+"Compile Report" per session
+Analytics
+Range selector for chart
+Settings
+"Save Changes" button
+Candidate Onboarding
+"Continue" button
+Rules Step
+"Enter Live Room" button (disabled until consent)
+Live Room
+"End Interview" / "Leave Room"
+Report
+"Export JSON"
+
+
+3. Consistent Visual Hierarchy
+Three levels of typographic weight exist on every content surface:
+Primary text (text-foreground) — headings and values
+Secondary text (text-muted-foreground) — labels, descriptions, captions
+Accent text (text-primary) — teal for live values, KPIs, active states
+
+4. Minimal Cognitive Load
+No nested dropdowns
+No multi-step modals
+Confirmations use Sonner toasts, not blocking dialogs
+Error states are inline, not separate screens (except terminal failures like WebRTC connection failed)
+
+5. Progressive Disclosure
+The candidate journey uses multi-step component flow (CandidateFlow) that reveals the next step only after the current one is complete. Recruiters see the room creation result only after clicking "Generate."
+
+6. Fail States Are First-Class
+Every async operation has explicit loading, success, and failure states. Connection failures, permission denials, and empty data states all have distinct UI treatments — they are never silently ignored.
+
+7. Data Is Never Stale
+All live session data (connection state, trust score, alerts) is updated in real time via Firestore listeners or local state updates. The UI should never show outdated values.
+
+3. Brand Identity
+Brand Personality
+Attribute
+Expression in UI
+Professional
+Dark glassmorphic theme, clean typography, no cartoonish elements
+Trustworthy
+Teal primary (#10B981) associated with security and integrity
+Modern
+oklch color space, Tailwind v4, backdrop-blur, gradient backgrounds
+Technical
+Monospace font for Room IDs, code-like precision in layout
+Minimalist
+No sidebar icons without labels; no decorative illustrations
+
+Brand Tone
+Confident but not aggressive — "Generate Interview Room" not "Create"
+Precise — "Trust Score: 94%" not "Looking Good"
+Human when addressing candidates — "Welcome", "Please provide your details"
+Technical when addressing recruiters — "AI Threshold", "Compile Report", "Trust Log"
+Brand Attributes
+Primary brand color: Teal — oklch(0.7 0.15 160) ≈ #10B981 (Emerald 500)
+This teal is used for:
+All primary buttons and interactive CTAs
+Active navigation states
+Trust score numbers when score > 80%
+Ring/focus states
+Chart fill colors
+Accent glows (shadow-[0_0_20px_rgba(16,185,129,0.3)])
+Logo text
+Logo treatment: The word "GetAWay" in text-2xl font-bold text-primary tracking-tight using Poppins. No icon. The branding is typographic.
+
+4. Color System
+The Palette — Dark Mode Only
+[!IMPORTANT] GetAWay enforces dark mode at the :root level with color-scheme: dark. There is no light mode toggle. All colors are defined as oklch() values in src/app/globals.css.
+
+Primary Colors
+Token
+oklch
+Approximate Hex
+Purpose
+Usage
+--primary
+oklch(0.7 0.15 160)
+#10B981
+Brand teal
+Buttons, active states, trust score, focus rings, chart stroke
+--primary-foreground
+oklch(0.98 0.01 260)
+#F8FAFC
+Text on primary
+Button labels on teal backgrounds
+--ring
+oklch(0.7 0.15 160)
+#10B981
+Focus ring
+All focus-visible outlines
+
+Usage Guidelines:
+Use text-primary for live data values, room IDs, and accent labels
+Use bg-primary only for the primary CTA button per page
+Never use bg-primary for more than one button on the same screen
+Teal glows: shadow-[0_0_20px_rgba(16,185,129,0.3)] on primary buttons; shadow-[0_0_15px_rgba(16,185,129,0.2)] on active nav items
+
+Background Colors
+Token
+oklch
+Approximate Hex
+Purpose
+Usage
+--background
+oklch(0.2 0.02 260)
+#1E2A3A
+Page background
+Body background base
+--card
+oklch(0.25 0.02 260)
+#243044
+Surface layer
+Cards, panels, sidebar
+--popover
+oklch(0.2 0.02 260)
+#1E2A3A
+Popover background
+Tooltips, dropdowns
+--muted
+oklch(0.28 0.03 260)
+#283450
+Muted surface
+Subtle backgrounds, inactive tabs
+
+Body Background (composite):
+background:
+  radial-gradient(circle at top right, rgba(20, 184, 166, 0.1) 0%, transparent 40%),
+  radial-gradient(circle at bottom left, #1e293b 0%, transparent 50%),
+  #0f172a;
+background-attachment: fixed;
+
+This creates a fixed deep navy background with a subtle teal bloom at the top-right and a slate blue gradient at the bottom-left.
+
+Text Colors
+Token
+oklch
+Approximate Hex
+Purpose
+Usage
+--foreground
+oklch(0.98 0.01 260)
+#F8FAFC
+Primary text
+Headings, values, body text
+--card-foreground
+oklch(0.98 0.01 260)
+#F8FAFC
+Card text
+Text within card components
+--muted-foreground
+oklch(0.7 0.02 260)
+#94A3B8
+Secondary text
+Labels, descriptions, captions, timestamps
+
+
+Interactive / State Colors
+Token
+oklch
+Approximate Hex
+Purpose
+Usage
+--secondary
+oklch(0.3 0.03 260)
+#2D3B55
+Secondary actions
+Secondary buttons, inactive tabs
+--secondary-foreground
+oklch(0.98 0.01 260)
+#F8FAFC
+Secondary text
+Labels on secondary buttons
+--accent
+oklch(0.7 0.15 160)
+#10B981
+Accent states
+Hover overlays (same as primary)
+--accent-foreground
+oklch(0.98 0.01 260)
+#F8FAFC
+Accent text
+Text on accent backgrounds
+
+
+Destructive / Error Colors
+Token
+oklch
+Approximate Hex
+Purpose
+Usage
+--destructive
+oklch(0.6 0.2 25)
+#EF4444
+Errors, warnings
+Destructive buttons, error text, alert icons
+--destructive-foreground
+oklch(0.98 0.01 260)
+#F8FAFC
+Text on destructive
+Labels on red backgrounds
+
+Usage Rules:
+text-destructive for inline error messages, alert text
+bg-destructive/10 for soft error backgrounds (not solid red)
+border-destructive for error-state card borders
+w-2 h-2 rounded-full bg-destructive animate-pulse for the "LIVE" recording indicator in the interview room
+
+Border / Input Colors
+Token
+oklch
+Approximate Hex
+Purpose
+Usage
+--border
+oklch(0.4 0.03 260)
+#4A5568
+Default borders
+Cards, dividers, inputs at rest
+--input
+oklch(0.3 0.03 260)
+#2D3B55
+Input background
+Text input backgrounds
+
+Special Border Patterns:
+Glass panels: border-white/10 (rgba(255,255,255,0.1))
+Active nav: border-primary/30 with teal glow
+Error cards: border-l-4 border-l-destructive (left accent border)
+
+Chart Colors
+Token
+oklch
+Approximate Hex
+Role
+--chart-1
+oklch(0.7 0.15 160)
+#10B981
+Primary series (sessions)
+--chart-2
+oklch(0.6 0.1 200)
+#38BDF8
+Secondary series
+--chart-3
+oklch(0.5 0.1 240)
+#818CF8
+Tertiary series
+--chart-4
+oklch(0.4 0.1 280)
+#A78BFA
+Quaternary series
+--chart-5
+oklch(0.3 0.1 320)
+#F472B6
+Quinary series
+
+Chart specific overrides (hardcoded in SessionsChart):
+Stroke: #10B981
+Grid: #1e293b
+Tick text: #94a3b8
+Tooltip background: #1e293b, border: #334155
+
+Trust Score Color Coding
+This is a semantic color system used across InterviewerView and the Report page:
+score > 80  → text-primary    (#10B981) // High trust — green
+score > 60  → text-yellow-500 (#EAB308) // Medium trust — yellow
+score ≤ 60  → text-destructive (#EF4444) // Low trust — red
+
+Applied to: Trust score badge in InterviewerView, trust score bar in SessionsPage and ReportPage.
+
+Color Accessibility Notes
+[!WARNING] Several color combinations have not been formally audited for WCAG 2.1 compliance. The following should be verified:
+text-muted-foreground (#94A3B8) on bg-card (#243044) — estimated contrast ~4.2:1 (borderline AA)
+Teal primary #10B981 on dark card — estimated contrast ~3.5:1 (fails AA for normal text, passes for large text)
+All body text #F8FAFC on #1E2A3A — estimated contrast ~14:1 ✅
+
+5. Typography System
+Font Families
+Font
+Variable
+Usage
+Inter
+--font-inter / var(--font-sans)
+Body text, labels, inputs, all non-heading content
+Poppins
+--font-poppins / var(--font-heading)
+All headings (h1–h6), CardTitle, logo
+
+Loading: Both fonts are loaded via next/font/google in src/app/layout.tsx.
+const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
+const poppins = Poppins({
+  variable: "--font-poppins",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
+CSS rule: All h1–h6 elements receive font-family: var(--font-poppins) via a base layer rule in globals.css.
+
+Type Scale
+Level
+Font
+Size
+Weight
+Line Height
+Usage
+Display
+Poppins
+text-4xl (2.25rem)
+font-bold (700)
+tight
+Report page <h1>, ThankYou page <h1>
+Heading 1
+Poppins
+text-3xl (1.875rem)
+font-bold (700)
+tight
+Dashboard section titles (<h2>)
+Heading 2
+Poppins
+text-2xl (1.5rem)
+font-semibold (600)
+tight
+Card titles, modal headings, onboarding heading
+Heading 3
+Poppins
+text-xl (1.25rem)
+font-bold (700)
+tight
+Room ID display, candidate name in report
+Card Title
+Poppins
+text-base (1rem)
+font-medium (500)
+snug
+CardTitle component
+Body
+Inter
+text-sm (0.875rem)
+font-normal (400)
+normal
+Most descriptive and body copy
+Small / Caption
+Inter
+text-xs (0.75rem)
+font-normal (400)
+normal
+Labels, meta text, muted-foreground items
+Button
+Inter
+text-sm (0.875rem)
+font-medium (500)
+—
+Button labels
+Label
+Inter
+text-sm (0.875rem)
+font-medium (500)
+—
+Form labels
+Mono
+System mono
+text-sm / text-2xl
+font-bold
+—
+Room IDs, code displays
+
+Tracking (Letter Spacing)
+Context
+Class
+Usage
+Tight headings
+tracking-tight
+All dashboard headings, report headings
+Wider labels
+tracking-wider
+"INTERVIEWER MODE", "LIVE SESSION" status labels
+Ultra-wide decorative
+tracking-widest
+"Developed by" section label in ThankYou
+
+Font Weight Reference
+Weight
+Name
+When to Use
+400
+Regular
+Body text, descriptions, captions
+500
+Medium
+Button labels, form labels, nav items
+600
+Semibold
+Section headings in forms, alerts
+700
+Bold
+Page titles, KPI values, room IDs
+
+
+6. Spacing System
+Base Unit: 4px (Tailwind Default)
+All spacing follows the Tailwind v4 default scale (1 unit = 4px).
+Scale
+px
+rem
+Common Uses
+space-1
+4px
+0.25rem
+Icon gaps, tight inline spacing
+space-2
+8px
+0.5rem
+Icon + label gaps, badge padding
+space-3
+12px
+0.75rem
+Small button padding, compact card content
+space-4
+16px
+1rem
+Standard component padding, gap between form fields
+space-6
+24px
+1.5rem
+Section spacing within a page, card content padding
+space-8
+32px
+2rem
+Card padding, page section gaps
+space-10
+40px
+2.5rem
+Large card padding (ThankYou page)
+space-12
+48px
+3rem
+Sidebar logo margin-bottom
+
+Component Padding Patterns
+Component
+Padding
+Source
+CardContent
+px-4 (16px horizontal)
+card.tsx
+CardHeader
+px-4 (16px horizontal)
+card.tsx
+CardFooter
+p-4 (16px all sides)
+card.tsx
+Sidebar nav items
+px-4 py-3
+recruiter/layout.tsx
+Sidebar outer padding
+py-8
+recruiter/layout.tsx
+Main content area
+p-8 (32px)
+recruiter/layout.tsx
+Interview top bar
+px-6 (24px)
+InterviewerView.tsx
+Control bar
+px-6 (24px)
+InterviewerView.tsx
+Glass panel cards (ThankYou)
+p-10 (40px)
+thankyou/page.tsx
+Page wrapper
+p-4 (16px)
+Interview pages
+
+Page Layout Spacing
+Context
+Value
+Class
+Page outer margin
+16px
+m-4
+Sidebar width
+256px (w-64)
+Fixed
+Main content gap
+flex-1
+Responsive
+Section space-y
+24px
+space-y-6
+Grid column gaps
+16px
+gap-4
+Large grid gaps
+24px
+gap-6
+
+
+7. Layout System
+Container Widths
+Context
+Max Width
+Class
+Recruiter content
+Unbounded (flex-1)
+—
+Initialize / Settings page
+768px
+max-w-3xl
+Interview / Live room
+80rem
+max-w-7xl (interviewer), max-w-6xl (candidate)
+Candidate onboarding card
+28rem
+max-w-md
+Rules step card
+32rem
+max-w-lg
+ThankYou content
+42rem
+max-w-2xl
+Error panel
+28rem
+max-w-md
+Report content
+80rem
+max-w-5xl
+
+Breakpoints
+Tailwind v4 default breakpoints — no custom breakpoints defined in the codebase.
+Breakpoint
+Width
+Applied
+sm
+640px
+sm:grid-cols-3 (Analytics summary), sm:w-auto (Initialize button)
+md
+768px
+md:grid-cols-3 (Overview KPIs), md:col-span-* (Report layout)
+lg
+1024px
+— (not explicitly used)
+
+Grid System
+Page
+Grid
+Usage
+Overview
+grid gap-4 md:grid-cols-3
+KPI cards
+Analytics summary
+grid grid-cols-1 sm:grid-cols-3 gap-4
+Stat cards
+Report
+grid grid-cols-1 md:grid-cols-3 gap-6
+Candidate card + timeline
+ThankYou info
+grid grid-cols-2 gap-3
+Platform/Version/Contact/Support
+ThankYou developers
+grid grid-cols-1 sm:grid-cols-2 gap-4
+Developer cards
+SessionsChart stats
+grid grid-cols-3 gap-3
+Total/Peak/Avg stats
+
+Layout Structures
+Recruiter Dashboard Layout
+┌─────────────────────────────────────────────────────────┐
+│  body (bg-background, fixed radial gradient)             │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │ div.flex.h-screen.overflow-hidden                │   │
+│  │  ┌───────────┐  ┌────────────────────────────┐  │   │
+│  │  │  <aside>  │  │  <main>                    │  │   │
+│  │  │  w-64     │  │  flex-1 overflow-y-auto    │  │   │
+│  │  │  glass-   │  │  p-4                       │  │   │
+│  │  │  panel    │  │  ┌──────────────────────┐  │  │   │
+│  │  │  m-4 mr-0 │  │  │ glass-panel h-full   │  │  │   │
+│  │  │           │  │  │ rounded-l-none       │  │  │   │
+│  │  │  Logo     │  │  │ p-8                  │  │  │   │
+│  │  │  Nav items│  │  │ {children}           │  │  │   │
+│  │  │           │  │  └──────────────────────┘  │  │   │
+│  │  └───────────┘  └────────────────────────────┘  │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+
+The sidebar is a glass panel with m-4 mr-0 rounded-r-none border-r-0. The main area is a glass panel with rounded-l-none. Together they form one seamless frosted-glass rectangle.
+Interview / Live Room Layout
+┌─────────────────────────────────────────────────────────┐
+│  div.w-full.min-h-screen.bg-background.flex-col.center  │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │ glass-panel (h-[calc(100vh-2rem)] max-w-7xl)      │  │
+│  │  ┌─────────────────────────────────────────────┐  │  │
+│  │  │ TOP BAR (h-16, border-b, bg-black/40)       │  │  │
+│  │  │ Status · Candidate name · Trust score       │  │  │
+│  │  └─────────────────────────────────────────────┘  │  │
+│  │  ┌─────────────────────────────────────────────┐  │  │
+│  │  │ VIDEO AREA (flex-1, bg-black/60)            │  │  │
+│  │  │  Remote stream (full cover)                 │  │  │
+│  │  │  Self PiP (absolute bottom-right)           │  │  │
+│  │  │  Action buttons (absolute top-left)         │  │  │
+│  │  └─────────────────────────────────────────────┘  │  │
+│  │  ┌─────────────────────────────────────────────┐  │  │
+│  │  │ CONTROL BAR (h-20, border-t, bg-black/50)   │  │  │
+│  │  │ Mic · Camera · Divider · Screen · Leave     │  │  │
+│  │  └─────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+
+Candidate Journey Layout
+div.min-h-screen.bg-background.flex.flex-col.items-center.justify-center.p-4
+  │
+  ├── Step: onboarding → <OnboardingStep /> (centered Card, max-w-md)
+  ├── Step: rules      → <RulesStep />      (centered Card, max-w-lg)
+  └── Step: live       → <LiveRoomStep />   (full viewport panel)
+
+Responsive Behavior
+Screen
+Behavior
+Desktop (>1024px)
+Recruiter sidebar (w-64) + content area. Full 7-column interview panel.
+Tablet (768–1024px)
+KPI grid collapses to single column. Report stacks vertically.
+Mobile (<640px)
+All grids become single column. Dashboard is unusable (not designed for mobile).
+
+[!IMPORTANT] The recruiter dashboard is desktop-only by design. The flex h-screen overflow-hidden layout breaks at mobile widths. Candidate-facing pages (/interview/*, /thankyou) are responsive.
+
+8. Design Tokens
+All tokens are CSS custom properties defined in :root in src/app/globals.css. They are consumed via Tailwind v4's @theme inline block.
+Color Tokens
+/* Backgrounds */
+--background:            oklch(0.20 0.02 260)   /* #0F172A → #1E2A3A */
+--card:                  oklch(0.25 0.02 260)   /* #243044 */
+--popover:               oklch(0.20 0.02 260)   /* Same as background */
+--muted:                 oklch(0.28 0.03 260)   /* #283450 */
+
+/* Text */
+--foreground:            oklch(0.98 0.01 260)   /* #F8FAFC */
+--card-foreground:       oklch(0.98 0.01 260)   /* #F8FAFC */
+--popover-foreground:    oklch(0.98 0.01 260)   /* #F8FAFC */
+--muted-foreground:      oklch(0.70 0.02 260)   /* #94A3B8 */
+
+/* Brand */
+--primary:               oklch(0.70 0.15 160)   /* #10B981 */
+--primary-foreground:    oklch(0.98 0.01 260)   /* #F8FAFC */
+--accent:                oklch(0.70 0.15 160)   /* #10B981 (same as primary) */
+--accent-foreground:     oklch(0.98 0.01 260)   /* #F8FAFC */
+
+/* Interactions */
+--secondary:             oklch(0.30 0.03 260)   /* #2D3B55 */
+--secondary-foreground:  oklch(0.98 0.01 260)   /* #F8FAFC */
+--destructive:           oklch(0.60 0.20 25)    /* #EF4444 */
+--destructive-foreground:oklch(0.98 0.01 260)   /* #F8FAFC */
+
+/* Utility */
+--border:                oklch(0.40 0.03 260)   /* #4A5568 */
+--input:                 oklch(0.30 0.03 260)   /* #2D3B55 */
+--ring:                  oklch(0.70 0.15 160)   /* #10B981 */
+
+/* Sidebar */
+--sidebar:               oklch(0.25 0.02 260)
+--sidebar-foreground:    oklch(0.98 0.01 260)
+--sidebar-primary:       oklch(0.70 0.15 160)
+--sidebar-primary-foreground: oklch(0.98 0.01 260)
+--sidebar-accent:        oklch(0.30 0.03 260)
+--sidebar-accent-foreground: oklch(0.98 0.01 260)
+--sidebar-border:        oklch(0.40 0.03 260)
+--sidebar-ring:          oklch(0.70 0.15 160)
+
+/* Charts */
+--chart-1:               oklch(0.70 0.15 160)   /* #10B981 */
+--chart-2:               oklch(0.60 0.10 200)
+--chart-3:               oklch(0.50 0.10 240)
+--chart-4:               oklch(0.40 0.10 280)
+--chart-5:               oklch(0.30 0.10 320)
+
+Border Radius Tokens
+--radius:     0.75rem   /* 12px — base radius */
+--radius-sm:  calc(var(--radius) - 4px)   /* 8px */
+--radius-md:  calc(var(--radius) - 2px)   /* 10px */
+--radius-lg:  var(--radius)               /* 12px */
+--radius-xl:  calc(var(--radius) + 4px)   /* 16px */
+
+Shadow Tokens
+No CSS custom properties for shadows. Shadows are applied inline via Tailwind utility classes or inline styles:
+Shadow
+Value
+Usage
+Glass panel
+box-shadow: 0 4px 30px rgba(0,0,0,0.5)
+.glass-panel
+Teal glow (button)
+shadow-[0_0_20px_rgba(16,185,129,0.3)]
+Primary CTA buttons
+Teal glow (nav)
+shadow-[0_0_15px_rgba(16,185,129,0.2)]
+Active nav items
+Live room panel
+shadow-2xl
+Interview room containers
+
+Transition Tokens
+No CSS custom properties for transitions. Transitions are applied via Tailwind classes:
+Class
+Duration
+Easing
+Usage
+transition-all duration-300
+300ms
+ease
+Nav hover states, glass-panel-hover, card hovers
+duration-500
+500ms
+ease
+animate-in page entry animations
+duration-800
+800ms
+ease
+Recharts area chart animation
+
+Z-index Layers
+Layer
+Value
+Usage
+Ambient background
+z-index: -1
+.ambient-layer fixed background texture
+Default content
+—
+Normal page flow
+Live room overlay (PiP, buttons)
+z-10 / z-20
+Interview controls above video
+
+
+9. Component Library Specification
+Primitive Library
+Base UI (@base-ui/react) — Button, Input, Checkbox, Merge Props
+shadcn/ui — Card, Badge, Switch, ScrollArea, Label, Sonner
+All components use cva (class-variance-authority) for variant management and cn() (clsx + tailwind-merge) for class composition.
+
+Button
+File: src/components/ui/button.tsx
+Primitive: @base-ui/react/button
+Variants
+Variant
+Background
+Text
+Border
+Hover
+Usage
+default
+bg-primary
+text-primary-foreground
+None
+bg-primary/80
+Primary CTAs
+outline
+bg-background
+text-foreground
+border-border
+bg-muted
+Secondary actions with border
+secondary
+bg-secondary
+text-secondary-foreground
+None
+bg-secondary/80
+Icon buttons, copy actions
+ghost
+Transparent
+text-foreground
+None
+bg-muted
+Navigation, subtle actions
+destructive
+bg-destructive/10
+text-destructive
+None
+bg-destructive/20
+Delete, warning, issue actions
+link
+Transparent
+text-primary
+None
+underline
+Inline text links
+
+Sizes
+Size
+Height
+Padding
+Font Size
+Usage
+default
+h-8 (32px)
+px-2.5
+text-sm
+Standard buttons
+xs
+h-6 (24px)
+px-2
+text-xs
+Micro actions
+sm
+h-7 (28px)
+px-2.5
+0.8rem
+Compact UI
+lg
+h-9 (36px)
+px-2.5
+text-sm
+Prominent CTA
+icon
+size-8 (32px)
+—
+—
+Square icon-only
+icon-sm
+size-7 (28px)
+—
+—
+Small icon-only
+icon-lg
+size-9 (36px)
+—
+—
+Large icon-only
+
+States
+Disabled: opacity-50 pointer-events-none
+Loading: Pair with <Loader2 className="animate-spin" /> inside button (not built into component)
+Focus: focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50
+Active (pressed): active:translate-y-px (1px downward nudge)
+Invalid: aria-invalid:border-destructive aria-invalid:ring-destructive/20
+Special Button Patterns
+Primary CTA with teal glow:
+<Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all">
+  Generate Interview Room
+</Button>
+
+Round icon control bar button:
+<Button variant="secondary" size="icon" className="h-12 w-12 rounded-full">
+  <Mic className="h-5 w-5" />
+</Button>
+
+Leave Room / End Interview (destructive, rounded pill):
+<Button variant="destructive" className="h-12 px-6 rounded-full font-semibold gap-2">
+  <PhoneOff className="h-5 w-5" /> Leave Room
+</Button>
+
+
+Card
+File: src/components/ui/card.tsx
+Primitive: Native <div>
+Sub-components
+Component
+Classes
+Purpose
+Card
+flex flex-col gap-4 rounded-xl bg-card py-4 ring-1 ring-foreground/10
+Container
+CardHeader
+@container grid auto-rows-min gap-1 rounded-t-xl px-4
+Title + description area
+CardTitle
+font-heading text-base font-medium leading-snug
+Card heading (Poppins)
+CardDescription
+text-sm text-muted-foreground
+Supporting description
+CardAction
+col-start-2 row-span-2 self-start justify-self-end
+Action slot (top-right)
+CardContent
+px-4
+Main content area
+CardFooter
+flex items-center rounded-b-xl border-t bg-muted/50 p-4
+Footer with border
+
+Glass Panel Override Pattern
+Most cards use the .glass-panel utility class in addition to the base Card component:
+<Card className="glass-panel border-white/10 bg-card/40">
+
+This adds:
+bg-card backdrop-blur-md border border-border shadow-lg rounded-xl
+box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5)
+The bg-card/40 override makes the card semi-transparent (40% opacity) for the glassmorphism effect.
+Card Variants in Practice
+Usage
+Extra Classes
+KPI card (Overview)
+glass-panel-hover bg-card/50 border-white/10
+Standard content card
+glass-panel border-white/10 bg-card/40
+Error alert card
+glass-panel border-l-4 border-l-destructive
+Chart card
+glass-panel border-white/10 bg-card/40
+
+
+Badge
+File: src/components/ui/badge.tsx
+Primitive: @base-ui/react/use-render
+Base: h-5 rounded-4xl border px-2 py-0.5 text-xs font-medium
+Variants
+Variant
+Background
+Text
+Border
+Usage
+default
+bg-primary
+text-primary-foreground
+None
+Room creation dates
+secondary
+bg-secondary
+text-secondary-foreground
+None
+Neutral tags
+destructive
+bg-destructive/10
+text-destructive
+None
+Alert count badges
+outline
+Transparent
+text-foreground
+border-border
+Room ID tags, date badges
+ghost
+Transparent → bg-muted on hover
+text-muted-foreground
+None
+Subtle tags
+link
+Transparent
+text-primary + underline
+None
+Inline link-style
+
+Usage Examples
+// Alert count (destructive)
+<Badge variant="secondary" className="bg-destructive/10 text-destructive border-none">
+  {session.alerts.length} Alerts
+</Badge>
+
+// Room date (outline)
+<Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+  {new Date(room.createdAt).toLocaleDateString()}
+</Badge>
+
+
+Input
+File: src/components/ui/input.tsx
+Primitive: @base-ui/react/input
+Base classes: h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base md:text-sm
+States:
+Resting: border-input (dark blue-grey), bg-transparent
+Focus: focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 (teal outline)
+Disabled: opacity-50 bg-input/50 cursor-not-allowed
+Invalid: aria-invalid:border-destructive aria-invalid:ring-destructive/20
+Placeholder: placeholder:text-muted-foreground
+Custom override used in onboarding:
+<Input className="bg-black/20 border-white/10" />
+
+This makes the input slightly more transparent against the card's dark background.
+
+Label
+File: src/components/ui/label.tsx
+Base classes: text-sm font-medium text-foreground
+Usage: Always used as <Label htmlFor="input-id"> paired with an Input or Checkbox.
+
+Checkbox
+File: src/components/ui/checkbox.tsx
+Usage: Consent checkbox in RulesStep.tsx. Controlled component with checked prop and onCheckedChange handler.
+States:
+Unchecked: border box
+Checked: filled with primary color + checkmark icon
+Disabled: opacity-50
+
+Switch
+File: src/components/ui/switch.tsx
+Usage: Settings page — "Require Microphone" and "Require Camera" toggles.
+States:
+Off: bg-secondary
+On: bg-primary (teal)
+Focus: teal ring
+
+ScrollArea
+File: src/components/ui/scroll-area.tsx
+Usage: RulesStep.tsx — interview guidelines list inside a fixed-height scrollable area.
+<ScrollArea className="h-48 w-full rounded-md border border-white/10 bg-black/20 p-4">
+
+
+Sonner (Toast)
+File: src/components/ui/sonner.tsx
+Library: sonner@2.0.7
+Configuration:
+<Toaster theme="dark" position="top-right" />
+
+Usage Patterns:
+Call
+When Used
+toast.success("Room created successfully!")
+After room generation
+toast.error("Manual warning issued to candidate.")
+After issuing warning
+toast("Leaving room...")
+Before navigation
+toast("Copied candidate link to clipboard")
+Clipboard copy
+toast.success("Settings saved successfully.")
+After settings save
+toast.success("Report exported successfully!")
+After report export
+
+
+SessionsChart
+File: src/components/recruiter/SessionsChart.tsx
+Library: recharts@3.8.1
+Type: Area chart with gradient fill
+Features:
+Time range selector: Day / Week / Month / Year (tab-style buttons)
+Continuous bucket pre-fill (no gaps in chart even with 0 sessions)
+Custom tooltip styled to match dark theme
+Summary stats strip below chart (Total / Peak / Avg per slot)
+Chart Colors (hardcoded):
+Area stroke: #10B981
+Area fill: url(#colorSessions) (gradient from #10B981 at 30% to transparent)
+Grid lines: #1e293b
+Axis ticks: #94a3b8
+Tooltip bg: #1e293b / border: #334155
+Range Filter Pattern:
+<div className="flex gap-1 bg-black/30 p-1 rounded-lg border border-white/5">
+  {RANGES.map(r => (
+    <button
+      className={range === r.key
+        ? "bg-primary text-primary-foreground shadow-[0_0_12px_rgba(16,185,129,0.3)]"
+        : "text-muted-foreground hover:text-foreground hover:bg-white/5"}
+    />
+  ))}
+</div>
+
+
+Loading States
+Pattern
+Usage
+Code
+Spinner button
+In-button loading (generate room, save settings, compile report, export)
+<Loader2 className="h-4 w-4 animate-spin" />
+Spinner overlay
+Camera initialisation in LiveRoomStep
+border-4 border-primary/20 border-t-primary animate-spin with pulsing icon center
+Chart loading
+Analytics page SSR boundary
+w-8 h-8 rounded-full border-2 border-primary/20 border-t-primary animate-spin
+Waiting state
+Connecting text in top bar
+<Loader2 className="w-3 h-3 animate-spin" /> + text
+
+
+Empty States
+Page
+Condition
+Visual
+Sessions
+roomList.length === 0
+Dashed border container + AlertTriangle icon + guidance text
+Report
+!room
+Glass panel + FileX icon + error message + back link
+Analytics chart
+No data
+Chart renders with all-zero buckets (continuous timeline)
+
+
+Error / Failure States
+State
+Trigger
+Visual
+WebRTC "denied"
+Browser permission denied
+Glass panel + AlertTriangle + description + Retry button
+WebRTC "failed"
+ICE negotiation failure
+Glass panel + AlertTriangle + description + Retry button
+InterviewerView "failed"
+Connection failed on join
+Full-screen centered glass panel + destructive border + Retry
+Next.js error boundary
+Unhandled exception
+error.tsx — AlertTriangle icon + error.message + Home/Retry buttons
+
+
+10. Form Design Standards
+Validation Behavior
+Trigger
+Validation
+Response
+Form submit (OnboardingStep)
+Required field check + email format
+Inline error message below form in text-sm text-destructive
+Form submit (SettingsPage)
+None (settings saved directly)
+Toast success
+OTP forms
+Zod schema on API side
+API error returned, displayed to user
+Number inputs
+HTML type="number"
+Browser native + API Zod z.number().min().max()
+
+Error States
+{error && <p className="text-sm text-destructive font-medium">{error}</p>}
+
+Placement: Inline, below the form fields, inside CardContent
+Style: text-sm text-destructive font-medium
+No icons on form errors — text only
+Success States
+Form success uses Sonner toast (toast.success(...))
+No inline success indicators on forms
+Loading States
+Submit button becomes disabled and shows <Loader2 className="animate-spin" /> in place of the button label text
+Form fields become disabled during submission
+Field Spacing
+Label (mb-2 implicit via space-y-2)
+Input
+Optional helper text (not yet implemented — Recommendation)
+
+Fields wrapped in <div className="space-y-2">. Groups of fields wrapped in <div className="space-y-4">.
+Label Placement
+Always above the input — no floating labels, no inline labels
+Left-aligned (text-left default)
+text-sm font-medium text-foreground
+Helper Text
+[!NOTE] Recommendation: Helper text (<p className="text-xs text-muted-foreground">) exists on the Settings page inputs but is not yet implemented in the Onboarding form. All future form fields should include helper text below the input describing the expected format.
+Consent Form Pattern
+<div className="flex items-start space-x-3 bg-secondary/30 p-4 rounded-lg border border-secondary/50">
+  <Checkbox id="consent" checked={consent} onCheckedChange={...} className="mt-1" />
+  <div>
+    <label htmlFor="consent" className="text-sm font-medium cursor-pointer">
+      I agree to the terms and conditions
+    </label>
+    <p className="text-sm text-muted-foreground">
+      I consent to being recorded and agree to follow all guidelines.
+    </p>
+  </div>
+</div>
+
+
+11. Iconography System
+Icon Library
+Library: Lucide React (lucide-react@1.16.0)
+Lucide provides SVG icons that are tree-shakeable, consistently styled (24px default viewBox, 2px stroke width), and semantically meaningful.
+Sizing Standards
+Context
+Size Class
+px
+Navigation icons
+size={20}
+20px
+Card header icons
+h-4 w-4
+16px
+Body / inline icons
+h-4 w-4
+16px
+Button icons
+h-4 w-4
+16px (auto via button variants)
+Small inline
+h-3 w-3
+12px
+Large state icons
+h-8 w-8
+32px
+Accent / display
+w-12 h-12
+48px
+Control bar
+h-5 w-5
+20px
+
+Icon Catalog
+Icon
+Import
+Usage Location
+LayoutDashboard
+lucide
+Sidebar — Overview nav item
+PlusCircle
+lucide
+Sidebar — Initialize nav item
+Video
+lucide
+Sidebar — Sessions nav item; camera on button
+VideoOff
+lucide
+Camera off state
+LineChart
+lucide
+Sidebar — Analytics nav item
+Settings
+lucide
+Sidebar — Settings nav item
+Copy
+lucide
+Copy-to-clipboard buttons
+Link
+lucide
+Open interviewer link button
+Mail
+lucide
+Email invite button, ThankYou contact
+Loader2
+lucide
+All loading spinners (animate-spin)
+Users
+lucide
+Overview — Candidates KPI
+Clock
+lucide
+Overview — Duration KPI; Report timeline heading
+Play
+lucide
+Compile Report button
+CheckCircle
+lucide
+View Report button
+ExternalLink
+lucide
+Live Room external link
+AlertTriangle
+lucide
+Empty states, error states, access denied
+Save
+lucide
+Settings save button
+ShieldCheck
+lucide
+Rules step header
+Mic / MicOff
+lucide
+Microphone toggle
+PhoneOff
+lucide
+Leave/End interview button
+MonitorUp
+lucide
+Screen share button
+AlertCircle
+lucide
+Issue Warning button; connection failed state
+CheckCircle2
+lucide
+Mark Verified button; ThankYou success icon
+Wifi
+lucide
+Connected status indicator
+Download
+lucide
+Report export button
+FileX
+lucide
+Report not found empty state
+User
+lucide
+Report — Candidate card heading
+RefreshCcw
+lucide
+Retry buttons
+Star
+lucide
+ThankYou 5-star rating
+Code2
+lucide
+ThankYou — About section icon
+Phone
+lucide
+ThankYou — Support contact
+
+Icon Usage Rules
+Always pair icons with text for primary actions — never icon-only unless in a round icon button with an ARIA label.
+Icon color inherits text color by default. Override with text-primary, text-destructive, or text-muted-foreground as needed.
+Animate only Loader2 with animate-spin. No other icons should animate.
+animate-pulse is reserved for:
+The red recording dot (bg-destructive animate-pulse)
+The teal CheckCircle2 ping animation on ThankYou page
+Custom SVG (Only 1 Instance)
+The LinkedIn icon in thankyou/page.tsx is implemented as a local inline SVG <LinkedInIcon /> component (24px viewBox, fill-current). This is the only non-Lucide icon in the codebase.
+
+12. Motion & Animation
+Animation Library
+Tailwind CSS Animate (tailwindcss-animate) loaded via @plugin "tailwindcss-animate" in globals.css.
+Page Entry Animations
+All pages use the animate-in utility class from tailwindcss-animate:
+Page
+Animation
+Duration
+Recruiter pages
+animate-in fade-in duration-500
+500ms
+Candidate Onboarding card
+animate-in zoom-in-95 duration-500
+500ms
+Rules step card
+animate-in slide-in-from-right-8 duration-500
+500ms
+Live room container
+animate-in fade-in zoom-in-95 duration-500
+500ms
+Room credentials reveal
+animate-in slide-in-from-bottom-4 fade-in duration-500
+500ms
+ThankYou page content
+CSS transition (opacity + translateY) — 700ms
+700ms
+Error panel (failed state)
+animate-in zoom-in-95 duration-500
+500ms
+Screen share indicator
+animate-in fade-in
+default
+
+Hover States
+Element
+Hover Behavior
+KPI Cards (Overview)
+glass-panel-hover — hover:bg-card/60 hover:shadow-xl hover:border-primary/50 (300ms)
+Nav items
+hover:bg-white/5 hover:text-foreground (300ms transition-all)
+Developer cards (ThankYou)
+hover:border-primary/20 transition-colors
+Chart range buttons
+hover:text-foreground hover:bg-white/5
+Primary Button
+hover:bg-primary/80 via CVA
+Outline Button
+hover:bg-muted hover:text-foreground
+Secondary Button
+hover:bg-secondary/80
+Ghost Button
+hover:bg-muted
+Destructive Button
+hover:bg-destructive/20
+
+Focus States
+All interactive elements use the ring pattern:
+focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50
+
+Ring color: #10B981 (teal) at 50% opacity. Width: 3px.
+Micro-animations
+Animation
+Element
+Class
+Red recording pulse
+Live session / interviewer dot
+bg-destructive animate-pulse
+Success ping
+ThankYou CheckCircle2
+absolute inset-0 rounded-full border-2 border-primary/30 animate-ping
+Chart render
+Area chart
+animationDuration={800} (Recharts)
+Spinner rotation
+All loaders
+animate-spin
+Background pulse
+.ambient-layer
+animation: ambient-pulse 15s ease-in-out infinite
+
+Loading Animation Patterns
+Spinner (buttons):
+<Loader2 className="h-4 w-4 animate-spin" />
+
+Large connection spinner (LiveRoomStep):
+<div className="relative">
+  <div className="w-24 h-24 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+  <div className="absolute inset-0 flex items-center justify-center">
+    <Video className="w-8 h-8 text-primary animate-pulse" />
+  </div>
+</div>
+
+Small spinner (Analytics chart lazy load boundary):
+<div className="w-8 h-8 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
+
+Transition Duration Standards
+Duration
+Usage
+150ms
+Tailwind default (not customised)
+300ms
+duration-300 — hover state transitions
+500ms
+duration-500 — page entry, reveal animations
+700ms
+ThankYou page custom CSS transition
+800ms
+Recharts area chart animation
+15s
+Background ambient pulse
+
+
+13. Accessibility Standards
+Current Implementation State
+Standard
+Status
+Focus indicators
+✅ focus-visible:ring-3 focus-visible:ring-ring/50 on all interactive elements
+ARIA labels (icon-only buttons)
+⚠️ Partially implemented — some icon-only buttons lack aria-label
+Keyboard navigation
+✅ All Buttons and Inputs are keyboard-accessible via Base UI primitives
+Semantic HTML
+✅ <aside>, <nav>, <main>, <form>, <label> used correctly
+Screen reader (SR) support
+⚠️ No sr-only text on icon-only buttons
+Color alone for status
+⚠️ Trust score uses color only (text-primary/yellow/destructive)
+Consent form
+✅ <label htmlFor="consent"> paired with Checkbox
+Form labels
+✅ All inputs have associated <Label htmlFor>
+alt attributes
+⚠️ The ambient background image has no alt
+ARIA expanded/invalid
+✅ Built into Base UI button variants (aria-expanded, aria-invalid)
+lang attribute
+✅ <html lang="en"> in layout.tsx
+Heading hierarchy
+✅ One <h1> per page (ThankYou, Report) — dashboards use <h2>
+Color contrast
+⚠️ See Section 4 — primary teal on dark may fail AA for body text
+
+Accessibility Compliance Checklist
+[x] All interactive elements reachable by keyboard (Tab order)
+[x] Focus visible on all interactive elements (teal ring)
+[x] Form labels programmatically associated with inputs
+[x] Semantic HTML structure (aside, nav, main, form)
+[x] Error messages are visible and descriptive
+[x] lang="en" set on HTML element
+[ ] Icon-only buttons need aria-label (Mic, Camera, Copy, Screen Share buttons in interview rooms)
+[ ] Trust score status should have text supplement (not color alone)
+[ ] Live session indicator should use aria-live="polite" region for screen readers
+[ ] Color contrast audit needed for text-muted-foreground on card backgrounds
+[!IMPORTANT] Recommendation: Add aria-label to all icon-only round control buttons in InterviewerView.tsx and LiveRoomStep.tsx:
+<Button size="icon" aria-label="Toggle microphone">
+  <Mic />
+</Button>
+
+
+14. Page-by-Page Design Specification
+Page 1: Root Redirect (/)
+File: src/app/page.tsx
+Purpose: Immediate redirect to dashboard
+Primary User: N/A
+Layout: None — server-side redirect via redirect("/recruiter/overview")
+Components Used: None
+Interactions: None — automatic navigation
+Responsive: N/A
+
+Page 2: Recruiter Overview (/recruiter/overview)
+File: src/app/recruiter/overview/page.tsx
+Purpose: KPI dashboard showing total interviews, candidates, average session duration
+Primary User: Recruiter
+Key Actions: Read-only (no primary action)
+Layout:
+Page title: "Overview" (h2, text-3xl font-bold tracking-tight)
+Subtitle: "Welcome to your GetAWay workspace." (muted-foreground)
+KPI Grid: grid gap-4 md:grid-cols-3
+  ├── Card: Total Interviews (glass-panel-hover)
+  ├── Card: Candidates (glass-panel-hover)
+  └── Card: Avg. Duration (glass-panel-hover, hardcoded "42m")
+
+Data Displayed:
+Field
+Source
+Notes
+Total Interviews
+Object.keys(rooms).length
+From mockStore
+Candidates Onboarded
+rooms.filter(r => r.candidate).length
+From mockStore
+Avg. Duration
+Hardcoded "42m"
+Not real data
+
+Components: Card, CardHeader, CardTitle, CardContent, Lucide Video, Users, Clock
+Responsive: KPI grid collapses to 1 column on mobile (md:grid-cols-3)
+
+Page 3: Initialize Interview (/recruiter/initialize)
+File: src/app/recruiter/initialize/page.tsx
+Purpose: Create a new interview room and get shareable links
+Primary User: Recruiter
+Key Actions: Generate Interview Room → Copy/Share candidate and interviewer links
+Layout:
+Page title: "Initialize Interview" (h2)
+Subtitle text
+Card (max-w-3xl):
+  CardHeader: "Create New Workspace"
+  CardContent:
+    Primary Button: "Generate Interview Room"
+    [After generation — slide-in-from-bottom-4]:
+      Room ID display (font-mono text-2xl text-primary)
+      Candidate Link row: URL box + Copy button + Mail button
+      Interviewer Link row: URL box + Copy button + Open button
+
+Interactions:
+Click "Generate" → 1.2s simulated delay → Room ID generated → toast.success("Room created successfully!") → Links appear with slide-in animation
+Copy button → navigator.clipboard.writeText() → toast("Copied ... link to clipboard")
+Mail button → <a href="mailto:?subject=...&body=..."> — opens email client
+Open button → target="_blank" link to interviewer URL
+Components: Card, Button, buttonVariants, Lucide Loader2, Copy, LinkIcon, Mail
+
+Page 4: Sessions (/recruiter/sessions)
+File: src/app/recruiter/sessions/page.tsx
+Purpose: Monitor all created rooms and their session state; trigger report compilation
+Primary User: Recruiter
+Key Actions: "Compile Report" per session → "View Report" when done
+Layout:
+Page title: "Sessions" (h2)
+Subtitle: "Monitor active interviews and compile post-session reports."
+
+[If rooms is empty]:
+  Dashed-border empty state container
+    AlertTriangle icon
+    "No sessions found" heading
+    Guidance text
+
+[If rooms exist]:
+  grid gap-6
+    For each room:
+      Card (glass-panel):
+        Room ID (font-mono text-xl text-primary)
+        Created date Badge
+        "Live Room" external link
+        For each session:
+          Candidate name
+          Trust bar (hardcoded 85% width)
+          Alert count Badge (destructive)
+          Status-gated button:
+            idle    → "Compile Report" (Button + Play icon)
+            running → "Compiling..." (disabled + Loader2)
+            done    → "View Report" (Link + CheckCircle icon)
+
+Data Displayed:
+Field
+Source
+Room ID
+mockStore rooms
+Sessions
+mockStore rooms[id].sessions
+Candidate name
+mockStore session.candidateName
+Trust bar
+Hardcoded 85% — not real data
+Alert count
+session.alerts.length
+
+
+Page 5: Analytics (/recruiter/analytics)
+File: src/app/recruiter/analytics/page.tsx
+Purpose: Visual trend analysis of session volume over time
+Primary User: Recruiter
+Key Actions: Select time range (Day/Week/Month/Year)
+Layout:
+Page title: "Analytics" (h2)
+Subtitle text
+
+Summary strip: grid grid-cols-1 sm:grid-cols-3 gap-4
+  ├── Card: "Total Rooms Created" → totalRooms (text-3xl text-primary)
+  ├── Card: "Candidates Onboarded" → count with candidate field
+  └── Card: "Latest Room" → most recent room ID (font-mono)
+
+Chart Card:
+  CardHeader: "Session Volume" + description
+  CardContent:
+    SessionsChart (dynamically imported, SSR=false)
+      Range filter pills: Day / Week / Month / Year
+      Area chart (400px height)
+      Stats strip: Total / Peak / Avg
+
+Components: Card, SessionsChart (Recharts), Lucide none
+Loading: Chart shows spinner while dynamically loading (SSR disabled to avoid Recharts dimension warning)
+
+Page 6: Settings (/recruiter/settings)
+File: src/app/recruiter/settings/page.tsx
+Purpose: Configure AI threshold, webhook URL, and device requirements
+Primary User: Recruiter
+Key Actions: Update settings → "Save Changes"
+Layout:
+Page title: "Settings" (h2)
+Subtitle: "Configure system preferences and AI thresholds."
+
+Card (glass-panel, max-w-3xl):
+  CardHeader: "System Configuration" / "Manage your GetAWay environment."
+  CardContent:
+    Section: "AI Analysis"
+      Label: "Trust Score Warning Threshold (%)"
+      Input type="number" (w-32)
+      Helper: "Alerts trigger if the candidate score drops below this."
+    
+    Section: "Integrations"
+      Label: "Webhook URL"
+      Input type="url" placeholder="https://..."
+      Helper text
+    
+    Section: "Device Defaults"
+      Row: "Require Microphone" + Switch
+      Row: "Require Camera" + Switch
+  
+  CardFooter (border-t):
+    Button: "Save Changes" with Save icon (or Loader2 while saving)
+
+Interactions: "Save Changes" → 800ms delay → updateSettings() → toast.success("Settings saved successfully.")
+
+Page 7: Interview Room — Candidate (/interview/[roomId])
+File: src/app/interview/[roomId]/page.tsx → CandidateFlow.tsx
+Purpose: Multi-step candidate onboarding and live interview participation
+Primary User: Candidate
+Step 1: Onboarding (OnboardingStep)
+Centered Card (max-w-md, zoom-in-95 animate-in):
+  Header: Teal "S" avatar circle
+  Title: "Welcome"
+  Description: "Please provide your details to begin the interview process."
+  Form:
+    Full Name field
+    Email Address field
+    Role Applying For field
+    Error message (if validation fails)
+  Footer: "Continue" button (primary, full-width) → ArrowRight icon
+
+Step 2: Rules (RulesStep)
+Card (max-w-lg, slide-in-from-right-8 animate-in):
+  Header: ShieldCheck icon + "Interview Guidelines"
+  ScrollArea (h-48):
+    Video icon + "Camera Required" rule
+    Mic icon + "Microphone Access" rule
+    AlertCircle + "AI Proctoring Active" rule
+  Consent checkbox (bg-secondary/30 container)
+  Footer: "Enter Live Room" button (disabled until consent checked)
+
+Step 3: Live Room (LiveRoomStep)
+See the Live Room layout from Section 7. Candidate version:
+"LIVE SESSION" top bar label
+Room ID displayed in top-right (font-mono)
+Self PiP: bottom-6 left-6 (opposite of interviewer)
+Buttons: Mic toggle + Camera toggle + "End Interview" (destructive)
+No screen share or "Issue Warning" controls
+
+Page 8: Interview Room — Interviewer (/interview/[roomId]?view=interviewer)
+File: src/app/interview/[roomId]/page.tsx → InterviewerView.tsx
+Purpose: Live monitoring panel for the recruiter acting as interviewer
+Primary User: Recruiter/Interviewer
+Layout (Full Viewport):
+Top Bar (h-16, bg-black/40, border-b):
+  Left: 🔴 INTERVIEWER MODE · divider · Candidate name · Connection status
+  Right: Trust Score pill (color-coded) · "Share Room" button
+
+Video Area (flex-1, bg-black/60):
+  Remote stream (full cover) OR waiting placeholder (avatar initial)
+  Self PiP (bottom-6 right-6, w-64 h-40, rounded-xl)
+  Screen share indicator (top-6 right-6, teal badge — conditional)
+  Trust Actions (top-6 left-6):
+    "Issue Warning" (destructive sm button)
+    "Mark Verified" (secondary sm button, text-primary)
+
+Control Bar (h-20, bg-black/50, backdrop-blur-md):
+  Mic toggle (rounded-full h-12 w-12)
+  Camera toggle (rounded-full h-12 w-12)
+  Divider
+  Screen Share toggle (rounded-full h-12 w-12, teal glow when active)
+  Divider
+  "Leave Room" (destructive rounded-full h-12 px-6)
+
+Interactions:
+"Issue Warning" → setTrustScore(prev - 15) + toast.error("Manual warning issued.")
+"Mark Verified" → visual only (no action wired)
+Screen Share → navigator.mediaDevices.getDisplayMedia() → browser picker → active indicator
+"Leave Room" → hangup() + cleanupSignal() + toast + redirect to /recruiter/sessions after 1s
+Mic / Camera toggles → toggleMic() / toggleCam() from useWebRTC
+
+Page 9: Session Report (/report/[roomId])
+File: src/app/report/[roomId]/page.tsx
+Purpose: Post-session analysis with timeline, trust score, and alerts
+Primary User: Recruiter
+Key Actions: Review session; "Export JSON"
+Layout:
+Full page (p-8, max-w-5xl mx-auto):
+  Header row:
+    Left: "Session Report" (h1 text-4xl) + Room ID (font-mono text-muted-foreground)
+    Right: "Back to Sessions" link + "Export JSON" button
+
+  grid grid-cols-1 md:grid-cols-3 gap-6:
+    Candidate Card (md:col-span-1):
+      Avatar (initial letter, w-24 h-24, primary/20 glow)
+      Name, Role, Email
+      Trust score bar + percentage (color-coded)
+
+    Right column (md:col-span-2, space-y-6):
+      Alerts Card (border-l-4 destructive if alerts > 0, primary if 0):
+        Alert list OR "No Alerts Recorded"
+      
+      Timeline Card:
+        Vertical timeline (dot + connector line)
+        Color-coded dots: info=muted, success=primary, warning=destructive
+        Timestamp + event text
+
+Export Interaction: Click "Export JSON" → 1.5s delay → Blob created → <a> click → downloads getaway-report-{roomId}.json
+Guard: If !room, render "Report Not Found" centered page with FileX icon and back link.
+
+Page 10: Thank You (/thankyou)
+File: src/app/thankyou/page.tsx
+Purpose: Post-interview exit screen for candidates; also shows developer/app info
+Primary User: Candidate (after interview ends)
+Layout:
+Full-screen centered (min-h-screen):
+  Ambient teal glow blobs (absolute, blur-3xl, pointer-events-none)
+  
+  Content (max-w-2xl, fade-in-up 700ms CSS transition):
+    Success Card (glass-panel, p-10, text-center):
+      CheckCircle2 icon (w-24 h-24 teal circle) + animate-ping ring
+      "Thank you for using GetAWay" (h1, text-primary for "GetAWay")
+      Descriptive text
+      Divider
+      5-star row (Star fill-primary)
+      Processing note text
+    
+    About Card (glass-panel, p-8):
+      Code2 icon + "About GetAWay" + version
+      Description paragraph
+      2x2 grid: Platform / Version / Contact / Support
+    
+    Developer Cards (glass-panel, p-8):
+      "Developed by" label (tracking-widest)
+      grid sm:grid-cols-2: Developer card × 2
+        Name, email, phone
+        LinkedIn button (branded #0A66C2)
+    
+    Footer text: copyright + developer names
+
+
+Page 11: Error Boundary (/any/* — on render error)
+File: src/app/error.tsx
+Purpose: Catch any unhandled Next.js render error
+Primary User: Any user who encounters a crash
+Layout:
+Full-screen centered:
+  Glass panel (max-w-md, border-destructive/20, bg-destructive/5, p-8):
+    AlertTriangle icon (w-16 h-16 circle, bg-destructive/20)
+    "Something went wrong!" (h2)
+    {error.message} or generic fallback (text-muted-foreground)
+    Button row:
+      "Go Home" (outline) → window.location.href = "/"
+      "Try Again" (primary) → reset()
+
+
+15. State Management & UI Data Flow
+State Architecture Overview
+┌─────────────────────────────────────────────────────┐
+│  STATE TYPES                                         │
+│                                                      │
+│  1. Local React State (useState)                     │
+│     └── Form fields, loading flags, step index       │
+│         UI toggles, current room ID after generation │
+│                                                      │
+│  2. Zustand Global Store (mockStore.ts)              │
+│     └── Persisted to localStorage ("getaway-mock-   │
+│         storage")                                    │
+│         rooms: Record<string, Room>                  │
+│         reports: Record<string, Report>              │
+│         settings: { aiThreshold, webhookUrl, ... }   │
+│                                                      │
+│  3. Firestore Real-time State (via Firebase SDK)     │
+│     └── WebRTC signaling documents                   │
+│         (webrtc/{roomId}/signal, candidates)         │
+│         [Planned] alerts, trustLogs, rooms           │
+│                                                      │
+│  4. WebRTC Local State (useWebRTC hook)              │
+│     └── localStream, remoteStream, connectionState   │
+│         micOn, camOn, peer connection ref            │
+└─────────────────────────────────────────────────────┘
+
+Zustand Store (mockStore.ts)
+Store Name: useMockStore
+Persistence Key: getaway-mock-storage (localStorage)
+State Shape:
+interface MockStoreState {
+  rooms: Record<string, Room>;
+  reports: Record<string, Report>;
+  settings: {
+    aiThreshold: number;      // Default: 75
+    webhookUrl: string;       // Default: ''
+    micEnabled: boolean;      // Default: true
+    cameraEnabled: boolean;   // Default: true
+  };
+}
+
+interface Room {
+  roomId: string;             // Format: "SH-XXXX"
+  createdAt: number;          // Unix timestamp
+  candidate?: CandidateInfo;  // Set after onboarding
+  interviewer?: { name: string };
+  sessions: Session[];        // Always has at least 1
+}
+
+interface Session {
+  id: string;                 // "sess-{timestamp}"
+  roomId: string;
+  candidateName: string;      // Initially "Pending..."
+  status: 'idle' | 'running' | 'done';
+  alerts: string[];
+  compiled: boolean;
+}
+
+Actions:
+Action
+Signature
+Effect
+createRoom
+() => string
+Creates Room + first Session; returns roomId
+updateCandidate
+(roomId, CandidateInfo) => void
+Sets room.candidate; updates session[0].candidateName
+updateSettings
+(Partial<Settings>) => void
+Merges settings
+updateSessionStatus
+(roomId, sessionId, status) => void
+Updates session.status and compiled flag
+
+Component State Patterns
+Component
+useState
+Purpose
+InitializePage
+isGenerating, currentRoomId
+Loading flag + result
+OnboardingStep
+name, email, role, isSubmitting, error
+Form state
+RulesStep
+consent
+Checkbox state
+CandidateFlow
+step
+Multi-step wizard
+InterviewerView
+screenShare, trustScore
+Screen share + simulated trust
+SettingsPage
+localSettings, isSaving
+Unsaved form draft
+ReportPage
+isExporting
+Export loading flag
+ThankYou
+visible
+Fade-in animation trigger
+SessionsChart
+range
+Active time filter
+SessionsPage
+—
+All state from mockStore
+
+WebRTC State (useWebRTC hook)
+The useWebRTC hook manages the entire WebRTC lifecycle and exposes:
+{
+  localStream: MediaStream | null;
+  remoteStream: MediaStream | null;
+  connectionState: 
+    'idle' | 'requesting-media' | 'waiting' | 
+    'connecting' | 'connected' | 'failed' | 'denied';
+  micOn: boolean;
+  camOn: boolean;
+  toggleMic: () => void;
+  toggleCam: () => void;
+  hangup: () => void;
+  cleanupSignal: () => Promise<void>;  // interviewer only
+}
+
+All WebRTC state is component-local (no Zustand). The hook writes SDP and ICE candidate data to Firestore for signaling.
+
+16. Frontend Architecture
+Routing Structure
+/ → redirect to /recruiter/overview
+
+/recruiter/                     RecruiterLayout (sidebar + main)
+  overview/                     OverviewPage
+  initialize/                   InitializePage
+  sessions/                     SessionsPage
+  analytics/                    AnalyticsPage
+  settings/                     SettingsPage
+
+/interview/[roomId]             InterviewPage (server component)
+  ?view=interviewer             → InterviewerView
+  (default)                     → CandidateFlow
+                                    → OnboardingStep
+                                    → RulesStep
+                                    → LiveRoomStep
+
+/report/[roomId]/               ReportPage
+/thankyou/                      ThankYouPage
+
+Component Hierarchy
+src/
+├── app/
+│   ├── layout.tsx              ← Root layout (fonts, Toaster, GlobalErrorCatcher)
+│   ├── page.tsx                ← Redirect
+│   ├── error.tsx               ← Global error boundary
+│   │
+│   ├── recruiter/
+│   │   ├── layout.tsx          ← Sidebar nav shell
+│   │   ├── overview/page.tsx
+│   │   ├── initialize/page.tsx
+│   │   ├── sessions/page.tsx
+│   │   ├── analytics/page.tsx
+│   │   └── settings/page.tsx
+│   │
+│   ├── interview/[roomId]/page.tsx  ← Route switch: CandidateFlow | InterviewerView
+│   ├── report/[roomId]/page.tsx
+│   └── thankyou/page.tsx
+│
+├── components/
+│   ├── GlobalErrorCatcher.tsx  ← window.onerror + unhandledrejection
+│   ├── interview/
+│   │   ├── CandidateFlow.tsx   ← Multi-step wizard (onboarding → rules → live)
+│   │   ├── InterviewerView.tsx ← Full-screen live monitoring panel
+│   │   ├── LiveRoomStep.tsx    ← Candidate live video room
+│   │   ├── OnboardingStep.tsx  ← Candidate details form
+│   │   ├── RulesStep.tsx       ← Consent + rules display
+│   │   └── VideoElement.tsx    ← <video> wrapper for MediaStream
+│   │
+│   ├── recruiter/
+│   │   └── SessionsChart.tsx   ← Recharts area chart with filter controls
+│   │
+│   └── ui/                     ← Component library (shadcn/base-ui)
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── badge.tsx
+│       ├── input.tsx
+│       ├── label.tsx
+│       ├── checkbox.tsx
+│       ├── switch.tsx
+│       ├── scroll-area.tsx
+│       └── sonner.tsx
+│
+├── hooks/
+│   └── useWebRTC.ts            ← Full WebRTC lifecycle hook
+│
+├── lib/
+│   ├── firebase/
+│   │   ├── client.ts           ← Firebase Client SDK (lazy singleton)
+│   │   └── admin.ts            ← Firebase Admin SDK (server-only)
+│   ├── schemas.ts              ← Zod validation schemas
+│   ├── api.ts                  ← apiSuccess / apiError helpers
+│   ├── mailer.ts               ← Nodemailer SMTP config
+│   ├── utils.ts                ← cn() utility
+│   └── next-themes-stub.ts     ← Dark mode stub
+│
+└── store/
+    └── mockStore.ts            ← Zustand persistent store
+
+Hooks
+Hook
+File
+Purpose
+useWebRTC
+src/hooks/useWebRTC.ts
+Manages full WebRTC peer connection lifecycle
+useMockStore
+src/store/mockStore.ts
+Zustand store access
+usePathname
+next/navigation
+Active nav state in RecruiterLayout
+useRouter
+next/navigation
+Programmatic navigation after interview end
+useMemo
+react
+Chart data calculation, report timeline derivation
+useEffect
+react
+Error listeners, trust score simulation, ThankYou reveal
+useState
+react
+All local form and UI state
+useRef
+react
+Screen share track reference
+use
+react
+Async params unwrapping (Next.js 15+ pattern)
+
+Services & Utilities
+Utility
+File
+Exports
+cn()
+src/lib/utils.ts
+Class merge utility (clsx + tailwind-merge)
+apiSuccess()
+src/lib/api.ts
+Consistent JSON success response
+apiError()
+src/lib/api.ts
+Consistent JSON error response
+apiValidationError()
+src/lib/api.ts
+Zod error formatter
+verifyAuthToken()
+src/lib/api.ts
+Firebase Admin token verifier
+getFirebaseApp()
+src/lib/firebase/client.ts
+Lazy Firebase client singleton
+sendOtpEmail()
+src/lib/mailer.ts
+Nodemailer SMTP send function
+
+
+17. API & Integration Specification
+Firebase Authentication
+Property
+Value
+Purpose
+Recruiter identity management — sign up, sign in, password reset
+Why
+Eliminates separate auth server; integrates with Firestore rules
+SDK (Client)
+firebase@12.13.0 — getAuth(), signInWithEmailAndPassword(), signInWithCustomToken()
+SDK (Server)
+firebase-admin@13.10.0 — adminAuth.verifyIdToken(), adminAuth.updateUser(), adminAuth.createCustomToken()
+Auth Method
+Email/Password + Custom Token (post-OTP reset)
+Token Lifetime
+1 hour (Firebase default ID tokens)
+Data Flow
+Client login → Firebase SDK → ID token → Authorization: Bearer <token> header → Server verifies
+
+
+Firestore (NoSQL Database)
+Property
+Value
+Purpose
+Primary data store for rooms, sessions, signaling, OTPs, analytics
+Why
+Real-time listeners for live data; auto-scaling; Firestore rules for access control
+Client SDK
+firebase — getFirestore(), doc(), collection(), onSnapshot(), setDoc(), addDoc()
+Server SDK
+firebase-admin — adminDb.collection(), full admin access bypassing rules
+Key Collections
+recruiters, rooms, webrtc, otpCodes
+Real-time Usage
+onSnapshot() in useWebRTC.ts — listens for SDP offer/answer and ICE candidates
+
+WebRTC Signaling Paths:
+/webrtc/{roomId}/signal/data          ← SDP offer/answer document
+/webrtc/{roomId}/callerCandidates/*  ← Interviewer ICE candidates
+/webrtc/{roomId}/calleeCandidates/*  ← Candidate ICE candidates
+
+
+WebRTC (Peer-to-Peer Video)
+Property
+Value
+Purpose
+P2P video and audio between candidate and interviewer
+Why
+No media server needed; DTLS-SRTP encryption by default; browser-native
+Implementation
+src/hooks/useWebRTC.ts — 412 lines
+Signaling
+Via Firestore (see above)
+ICE Servers
+Google STUN (stun.l.google.com:19302) + openrelay.metered.ca TURN
+Media API
+navigator.mediaDevices.getUserMedia(), getDisplayMedia()
+RTCPeerConnection
+Created per session; tracks added from getUserMedia
+Screen Share
+getDisplayMedia() in InterviewerView only
+
+Connection State Machine:
+idle → requesting-media → waiting → connecting → connected
+                       ↘ denied
+                                 ↘ failed
+
+
+SMTP Email (Nodemailer)
+Property
+Value
+Purpose
+Send OTP codes for password reset
+Why
+Vendor-agnostic; works with Gmail, SendGrid, AWS SES
+Library
+nodemailer@8.0.7
+Config
+SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM env vars
+Trigger
+POST /api/auth/otp/send route
+Implementation
+src/lib/mailer.ts — sendOtpEmail(to: string, code: string)
+Template
+Plain text email with OTP code (no HTML template yet)
+
+
+Zod (Data Validation)
+Property
+Value
+Purpose
+Runtime type-safe validation of all API request bodies
+Library
+zod@4.4.3
+Schemas File
+src/lib/schemas.ts
+Applied To
+All POST/PUT API route handlers
+
+Key Schemas:
+OtpSendSchema — { email: z.string().email() }
+ResetPasswordSchema — { email, otp, newPassword }
+CreateRoomSchema — empty (no body required)
+CandidateSubmitSchema — { name, email, role, consentGiven: z.literal(true) }
+AlertSchema — { message, issuedBy: "AI" | "INTERVIEWER", severity?, category? }
+TrustLogSchema — { score: z.number().min(0).max(100), reason? }
+SettingsSchema — { aiThreshold, webhookUrl, micEnabled, cameraEnabled }
+
+Recharts (Data Visualization)
+Property
+Value
+Purpose
+Session volume area chart in Analytics page
+Library
+recharts@3.8.1
+Component
+SessionsChart.tsx — AreaChart with ResponsiveContainer
+Data
+Bucketed room creation timestamps
+SSR
+Disabled (dynamic(() => ..., { ssr: false })) — Recharts requires DOM dimensions
+Chart Type
+AreaChart with gradient fill
+Interactivity
+Custom tooltip + time range filter buttons (Day/Week/Month/Year)
+
+
+18. Environment Variables Reference
+Source: README.md + src/lib/firebase/admin.ts + src/lib/mailer.ts + src/lib/firebase/client.ts
+Client-Side Variables (NEXT_PUBLIC_ — exposed to browser)
+Variable
+Purpose
+Required
+Notes
+NEXT_PUBLIC_FIREBASE_API_KEY
+Firebase project Web API key
+✅ Yes
+Intended to be public; Firestore rules are the real guard
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+Firebase Auth redirect domain
+✅ Yes
+e.g., project-id.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID
+Firebase project identifier
+✅ Yes
+Shared with Admin SDK
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+Firebase Storage bucket
+✅ Yes
+e.g., project-id.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+FCM sender ID
+✅ Yes
+Used for push notifications (if added)
+NEXT_PUBLIC_FIREBASE_APP_ID
+Firebase App ID
+✅ Yes
+Unique per Firebase app registration
+
+Server-Side Variables (Private — never sent to browser)
+Variable
+Purpose
+Required
+Security Notes
+FIREBASE_ADMIN_PROJECT_ID
+Firebase project ID (server)
+✅ Yes
+Same as NEXT_PUBLIC_FIREBASE_PROJECT_ID
+FIREBASE_ADMIN_PRIVATE_KEY
+RSA private key (service account)
+✅ Yes
+🔴 CRITICAL — grants full Firebase admin access. Must be stored in Vercel Encrypted Env Vars
+FIREBASE_ADMIN_CLIENT_EMAIL
+Service account email
+✅ Yes
+e.g., firebase-adminsdk@project.iam.gserviceaccount.com
+SMTP_HOST
+Email server hostname
+✅ Yes
+e.g., smtp.gmail.com
+SMTP_PORT
+Email server port
+✅ Yes
+587 for TLS, 465 for SSL
+SMTP_USER
+SMTP username
+✅ Yes
+Usually the sender email address
+SMTP_PASS
+SMTP password or app password
+✅ Yes
+🔴 HIGH — use Gmail App Password, not account password
+SMTP_FROM
+From address for OTP emails
+✅ Yes
+e.g., "GetAWay <noreply@getaway.app>"
+
+Variable Configuration Notes
+The FIREBASE_ADMIN_PRIVATE_KEY must be stored with escaped newlines and unescaped at runtime:
+privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n")
+
+
+If any server env vars are missing during next build, the Admin SDK falls back to a makeMissingProxy() that prevents build failures.
+All .env* files are gitignored — secrets are stored in Vercel project environment settings.
+
+19. Future Design Recommendations
+UI Inconsistencies Identified
+Issue
+Location
+Recommendation
+Room ID format inconsistency
+mockStore generates SH-XXXX; architecture docs say GW-XXXX; Initialize page label says "GetAWay"
+Standardise to one format (GW-XXXX or UUID)
+Trust bar hardcoded at 85%
+SessionsPage
+Connect to real Firestore trust score data
+Duration hardcoded at "42m"
+OverviewPage
+Derive from real session.startedAt / session.endedAt
+"Mark Verified" button has no action
+InterviewerView
+Wire to API or remove from UI
+No Sidebar collapse on mobile
+recruiter/layout.tsx
+Needs hamburger menu for tablet use
+error.tsx exposes error.message
+src/app/error.tsx
+Show generic message in production
+
+
+Missing Components
+Component
+Purpose
+Recommendation
+Authentication pages
+Login, signup, forgot password UI
+Add /auth/login, /auth/register, /auth/forgot-password pages
+Notification centre
+Real-time alerts for recruiter
+Sidebar bell icon + dropdown list
+Room status indicator
+Visual lifecycle (OPEN → ACTIVE → ENDED)
+Badge with colour-coded status on Sessions card
+Pagination
+For recruiters with many rooms
+Add to Sessions page
+Candidate OTP verification
+Optional security for candidates
+Not in current codebase
+Loading skeleton
+Instead of empty state on first load
+Skeleton component for room cards
+
+
+Accessibility Improvements
+Issue
+Fix
+Icon-only buttons lack aria-label
+Add aria-label="Toggle microphone" etc. to all control bar buttons
+Trust score uses color only
+Add text description alongside color (e.g., "High", "Medium", "Low")
+Live session indicator
+Add aria-live="polite" region for connection state changes
+No skip-to-content link
+Add <a href="#main-content" class="sr-only focus:not-sr-only">Skip to main content</a>
+
+
+Performance Improvements
+Item
+Current State
+Recommendation
+Chart SSR
+Disabled (necessary)
+Use intersection observer to defer chart render until visible
+Font loading
+Loaded at root layout
+Consider font-display: swap via next/font option
+Room list rendering
+All rooms rendered
+Virtualise with @tanstack/react-virtual at scale
+Firestore listeners
+New listener per component mount
+Create a shared listener context
+ambient-layer background image
+External Unsplash URL
+Replace with a local asset or CSS-only gradient
+
+
+Design Debt
+Item
+Debt
+mockStore in production UI
+All recruiter pages must migrate to real Firestore API calls
+No auth guard on recruiter pages
+src/middleware.ts must be created
+Hardcoded data in dashboard
+Overview avg. duration and Sessions trust bar use mock values
+No light mode
+Currently hardcoded dark — add theme toggle for accessibility
+WebRTC console logs in production
+Remove [WebRTC] verbose logs from useWebRTC.ts in production builds
+
+
+20. Frontend Quality Checklist
+This checklist is the source-of-truth standard for all future UI development on GetAWay. Every new screen, feature, and pull request must pass all applicable items.
+Design Consistency
+[ ] Uses only tokens from globals.css — no hardcoded hex colors
+[ ] Primary CTA uses bg-primary text-primary-foreground with teal glow shadow
+[ ] Cards use glass-panel border-white/10 bg-card/40 or glass-panel-hover pattern
+[ ] Headings use Poppins (font-heading / font-sans h* CSS rule)
+[ ] Body text uses Inter (font-sans default)
+[ ] Room IDs always rendered in font-mono text-primary
+[ ] muted-foreground used for labels, captions, and secondary descriptions
+[ ] Destructive red used ONLY for errors, warnings, and danger actions
+[ ] Page title is text-3xl font-bold tracking-tight (recruiter) or text-4xl font-bold (standalone pages)
+[ ] Subtitle under page title uses text-muted-foreground mt-2
+Accessibility
+[ ] All interactive elements are keyboard-accessible (tab order correct)
+[ ] Focus ring visible on all interactive elements (focus-visible:ring-3 focus-visible:ring-ring/50)
+[ ] All icon-only buttons have aria-label describing the action
+[ ] All form inputs have associated <Label htmlFor> elements
+[ ] One <h1> per standalone page; <h2> for dashboard sections
+[ ] Semantic HTML used (<main>, <nav>, <aside>, <form>, <section>)
+[ ] Color is not the sole differentiator for status information
+[ ] Live updating regions use aria-live for screen readers
+Responsiveness
+[ ] Candidate-facing pages (/interview/*, /thankyou) are fully responsive on mobile
+[ ] Recruiter dashboard layout is documented as desktop-only; add mobile warning if needed
+[ ] sm:, md: breakpoints used for grid collapse
+Performance
+[ ] Recharts (and any other browser-only libraries) imported with dynamic(() => import(...), { ssr: false })
+[ ] Route-level code splitting via Next.js App Router (automatic)
+[ ] Images use next/image (currently no images — all icons are SVGs)
+[ ] No external resources loaded without fallback (TURN server, Unsplash bg)
+State Management
+[ ] All real data fetched from Firestore via API routes (not mockStore in production)
+[ ] Zustand used only for local UI state (modals, filters, form drafts) in production
+[ ] No sensitive data (auth tokens, private keys) stored in Zustand or localStorage
+[ ] Loading, error, and empty states all handled for every async operation
+Component Reuse
+[ ] Uses existing UI primitives (Button, Card, Badge, Input, Label, Switch, Checkbox)
+[ ] New components placed in src/components/ (shared) or src/components/[feature]/ (feature-specific)
+[ ] New variants added to existing CVA configs in button.tsx / badge.tsx — not ad-hoc classes
+[ ] cn() used for all conditional class merging
+[ ] toast.success() / toast.error() / toast() used for all user-facing feedback — no alert()
+API Integration
+[ ] All server requests include Authorization: Bearer <token> header for recruiter routes
+[ ] API responses follow { success: true, data: ... } / { success: false, error: "..." } schema
+[ ] Error responses caught and displayed to user (not swallowed silently)
+[ ] Validation errors from API surface field-level messages in the UI
+Security (Frontend)
+[ ] No Firebase Admin credentials imported in any client component or "use client" file
+[ ] No sensitive data logged to console.log in production (no room IDs, emails, tokens)
+[ ] NEXT_PUBLIC_ env vars contain only public Firebase config — no secrets
+[ ] Recruiter routes guarded by middleware (once implemented)
+[ ] Webhook URL validated before storage (once implemented)
+Animation
+[ ] All new pages use animate-in fade-in duration-500 entry animation
+[ ] Loading spinners use <Loader2 className="animate-spin" />
+[ ] Hover transitions use transition-all duration-300
+[ ] No animations added that reduce motion for users who prefer prefers-reduced-motion
+Documentation
+[ ] New components include a JSDoc comment describing purpose and props
+[ ] New API routes include comments describing auth requirements and response schema
+[ ] New Firestore collections documented in the security rules file
+[ ] Environment variables added to .env.example and this document's Section 18
+
+
