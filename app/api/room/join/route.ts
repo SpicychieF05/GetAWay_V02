@@ -18,12 +18,10 @@ export async function POST(req: NextRequest) {
 
     const roomData = docSnap.data()!;
 
-    // ── Token validation ──────────────────────────────────────────────────────
     if (roomData.candidateToken !== token) {
       return NextResponse.json({ error: 'Invalid candidate token.' }, { status: 403 });
     }
 
-    // ── Room status check — reject ended rooms before any write ───────────────
     if (roomData.status === 'ended') {
       return NextResponse.json(
         { error: 'This interview session has already ended.' },
@@ -31,14 +29,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Attach candidateUid and record joinedAt (first join only) ─────────────
     const now = new Date().toISOString();
-    const updatePayload: Record<string, unknown> = {
-      candidateUid,
-      updatedAt: now,
-    };
+    const updatePayload: Record<string, unknown> = { candidateUid, updatedAt: now };
 
-    // Only write joinedAt on the first join (idempotent re-joins keep original)
+    // Preserve original joinedAt across re-joins
     if (!roomData.joinedAt) {
       updatePayload.joinedAt = now;
     }
@@ -48,14 +42,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       roomStatus: roomData.status as string,
-      // Return the candidate profile set flag so the page knows whether
-      // the onboarding form needs to be shown or can be skipped.
       candidateProfileSet: roomData.candidateProfileSet ?? false,
     });
 
   } catch (error) {
-    console.error('[POST /api/room/join] Error:', error);
+    console.error('[POST /api/room/join]', error);
     return NextResponse.json({ error: 'Internal Server Error.' }, { status: 500 });
   }
 }
-

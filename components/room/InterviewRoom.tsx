@@ -8,8 +8,6 @@ import { AlertTriangle, Mic, MicOff, Video, VideoOff, PhoneOff } from 'lucide-re
 interface InterviewRoomProps {
   roomId: string;
   role: 'recruiter' | 'candidate';
-  /** Optional pre-acquired MediaStream from DeviceCheckStep. When provided,
-   *  getUserMedia is skipped and this stream is used directly. */
   preAcquiredStream?: MediaStream | null;
 }
 
@@ -30,9 +28,7 @@ export function InterviewRoom({ roomId, role, preAcquiredStream }: InterviewRoom
     localStream,
   });
 
-  // Get User Media — skipped if a pre-acquired stream was passed in
   useEffect(() => {
-    // If DeviceCheckStep already acquired the stream, seed the video element
     if (preAcquiredStream) {
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = preAcquiredStream;
@@ -55,8 +51,7 @@ export function InterviewRoom({ roomId, role, preAcquiredStream }: InterviewRoom
     return () => {
       localStream?.getTracks().forEach(track => track.stop());
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preAcquiredStream]);
+  }, [preAcquiredStream]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Set Remote Stream
   useEffect(() => {

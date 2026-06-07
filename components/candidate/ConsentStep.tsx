@@ -1,20 +1,5 @@
 "use client";
 
-/**
- * components/candidate/ConsentStep.tsx
- * Phase 1 — CAND-002: Interview Guidelines & Consent
- *
- * FSD §14 Page 7, Step 2:
- *   Card (max-w-lg, slide-in-from-right-8 animate-in).
- *   ShieldCheck icon header — "Interview Guidelines".
- *   ScrollArea (h-48) with Camera, Mic, AI Proctoring rules.
- *   Consent checkbox in bg-secondary/30 container.
- *   "Enter Interview" button — DISABLED until consent checkbox is checked.
- *
- * PRD §23 / Security Architecture §10:
- *   consentTimestamp is captured at the moment the checkbox is checked (client-side).
- *   It is persisted server-side (with a server timestamp) via /api/candidate/profile.
- */
 import { useState } from 'react';
 import { ArrowRight, Camera, Mic, ShieldCheck, AlertCircle, Loader2, Check } from 'lucide-react';
 
@@ -22,7 +7,6 @@ interface ConsentStepProps {
   candidateName: string;
   onAccept: (consentTimestamp: string) => void;
   isSubmitting?: boolean;
-  /** Error message from the profile save API call (shown near the CTA). */
   saveError?: string;
 }
 
@@ -60,7 +44,7 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
   function handleConsentChange(e: React.ChangeEvent<HTMLInputElement>) {
     const checked = e.target.checked;
     setConsented(checked);
-    // Capture the exact moment the candidate ticked the box
+    // Security: capture the client-side timestamp at the exact moment of consent
     setConsentTimestamp(checked ? new Date().toISOString() : null);
   }
 
@@ -71,14 +55,12 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Ambient background */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full bg-brand-primary/5 blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-[400px] h-[400px] rounded-full bg-brand-primary/3 blur-3xl" />
       </div>
 
       <div className="w-full max-w-lg animate-in slide-in-from-right-8 duration-500 relative z-10">
-        {/* Logo strip */}
         <div className="flex items-center justify-center gap-2 mb-8">
           <div className="w-8 h-8 rounded-lg bg-brand-primary flex items-center justify-center text-black font-black text-sm">
             GW
@@ -88,9 +70,7 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
           </span>
         </div>
 
-        {/* Card */}
         <div className="bg-surface-base border border-border-strong rounded-2xl overflow-hidden shadow-2xl">
-          {/* Card Header */}
           <div className="px-8 pt-8 pb-6 border-b border-border">
             <div className="flex items-center gap-3 mb-2">
               <div className="w-10 h-10 rounded-xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center shrink-0">
@@ -107,7 +87,6 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
             </div>
           </div>
 
-          {/* Scrollable Rules */}
           <div className="px-8 pt-6">
             <div className="h-52 overflow-y-auto rounded-xl border border-border bg-black/20 p-1 scrollbar-thin">
               <div className="space-y-1 p-3">
@@ -131,13 +110,11 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
             </div>
           </div>
 
-          {/* Consent checkbox */}
           <div className="px-8 py-6">
             <label
               htmlFor="consent-checkbox"
               className="flex items-start gap-3 p-4 rounded-xl bg-brand-surface border border-brand-primary/20 cursor-pointer hover:bg-brand-primary/[0.08] transition-colors group"
             >
-              {/* Custom checkbox */}
               <div className="relative mt-0.5 shrink-0">
                 <input
                   id="consent-checkbox"
@@ -148,11 +125,10 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
                   className="sr-only"
                 />
                 <div
-                  className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${
-                    consented
+                  className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${consented
                       ? 'bg-brand-primary border-brand-primary'
                       : 'bg-transparent border-brand-primary/40 group-hover:border-brand-primary/70'
-                  }`}
+                    }`}
                 >
                   {consented && <Check className="w-3 h-3 text-black" strokeWidth={3} />}
                 </div>
@@ -171,7 +147,6 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
             </label>
           </div>
 
-          {/* Card Footer */}
           <div className="px-8 pb-8">
             <button
               id="enter-live-room-btn"
@@ -203,7 +178,6 @@ export function ConsentStep({ candidateName, onAccept, isSubmitting = false, sav
           </div>
         </div>
 
-        {/* Privacy note */}
         <div className="mt-4 px-4 py-3 rounded-xl border border-border bg-surface-elevated text-center">
           <p className="text-xs text-text-muted">
             <span className="text-brand-primary font-medium">Privacy: </span>

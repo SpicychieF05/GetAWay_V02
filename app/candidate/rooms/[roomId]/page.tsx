@@ -32,11 +32,9 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
       }
 
       try {
-        // ── Step 1: Sign in anonymously ─────────────────────────────────────
         const userCred = await signInAnonymously(auth);
         const candidateUid = userCred.user.uid;
 
-        // ── Step 2: Validate token + attach candidateUid ────────────────────
         const res = await fetch('/api/room/join', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -75,7 +73,7 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, token]);
 
-  // ── Loading ───────────────────────────────────────────────────────────────
+
   if (pageState === 'loading') {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
@@ -88,7 +86,7 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
     );
   }
 
-  // ── Room Ended ────────────────────────────────────────────────────────────
+
   if (pageState === 'error-ended') {
     return (
       <ErrorScreen
@@ -100,7 +98,7 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
     );
   }
 
-  // ── Invalid / Not Found ───────────────────────────────────────────────────
+
   if (pageState === 'error-invalid') {
     return (
       <ErrorScreen
@@ -112,7 +110,7 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
     );
   }
 
-  // ── Generic Error ─────────────────────────────────────────────────────────
+
   if (pageState === 'error-generic') {
     return (
       <ErrorScreen
@@ -125,15 +123,12 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
     );
   }
 
-  // ── Ready: Render Onboarding Flow ────────────────────────────────────────
   if (pageState === 'ready' && joinResult) {
     return (
       <CandidateOnboardingFlow
         roomId={roomId}
         candidateUid={joinResult.candidateUid}
         candidateToken={token!}
-        // If profile was already saved (e.g., page refresh after consent),
-        // skip straight to device check to avoid losing state.
         skipToDeviceCheck={joinResult.candidateProfileSet}
       />
     );
@@ -142,7 +137,7 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
   return null;
 }
 
-// ── Error Screen Component ────────────────────────────────────────────────────
+
 
 interface ErrorScreenProps {
   icon: React.ReactNode;
@@ -156,7 +151,6 @@ function ErrorScreen({ icon, iconBg, title, message, showRetry }: ErrorScreenPro
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm text-center">
-        {/* Logo */}
         <div className="flex items-center justify-center gap-2 mb-8">
           <div className="w-8 h-8 rounded-lg bg-brand-primary flex items-center justify-center text-black font-black text-sm">
             GW

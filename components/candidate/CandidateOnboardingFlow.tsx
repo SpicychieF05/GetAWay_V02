@@ -1,28 +1,11 @@
 "use client";
 
-/**
- * components/candidate/CandidateOnboardingFlow.tsx
- * Phase 1 — Multi-step Candidate Onboarding Wizard
- *
- * Flow (PRD §8 Candidate Flow / FSD §14 Page 7):
- *   Step 0 — OnboardingStep   (name / email / role)
- *   Step 1 — ConsentStep      (interview rules + explicit consent)
- *   Step 2 — [API call]       POST /api/candidate/profile (profile + consent persisted)
- *   Step 3 — DeviceCheckStep  (camera / mic pre-flight)
- *   Step 4 — InterviewRoom    (live WebRTC session)
- *
- * Security (Security Architecture §10):
- *   The API call happens AFTER consent is accepted so that
- *   consentGiven:true and a consentTimestamp are always recorded together.
- *   If the API call fails, the candidate is shown an error and cannot proceed.
- */
 import { useState } from 'react';
 import { OnboardingStep } from './OnboardingStep';
 import { ConsentStep } from './ConsentStep';
 import { DeviceCheckStep } from './DeviceCheckStep';
 import { InterviewRoom } from '@/components/room/InterviewRoom';
 import { CandidateProfile } from '@/types';
-import { AlertTriangle, RefreshCcw } from 'lucide-react';
 
 type Step = 'onboarding' | 'consent' | 'saving' | 'device-check' | 'live';
 
@@ -30,7 +13,6 @@ interface CandidateOnboardingFlowProps {
   roomId: string;
   candidateUid: string;
   candidateToken: string;
-  /** If the profile was already saved in a previous page load, skip to device check */
   skipToDeviceCheck?: boolean;
 }
 
@@ -46,13 +28,13 @@ export function CandidateOnboardingFlow({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isConsenting, setIsConsenting] = useState(false);
 
-  // ── Step 0 → Step 1: Candidate filled in the form ──────────────────────────
   function handleProfileContinue(candidateProfile: CandidateProfile) {
     setProfile(candidateProfile);
     setStep('consent');
   }
 
-  // ── Step 1 → Step 2: Candidate accepted consent ────────────────────────────
+  // Security: API call runs only after consent is accepted so consentGiven:true
+  // and consentTimestamp are always recorded together as an atomic unit.
   async function handleConsentAccept(consentTimestamp: string) {
     if (!profile) return;
     setSaveError(null);
@@ -80,25 +62,19 @@ export function CandidateOnboardingFlow({
         throw new Error(body?.error ?? 'Failed to save profile. Please try again.');
       }
 
-      // Profile and consent persisted — proceed to device check
       setStep('device-check');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
-      setSaveError(msg);
-      // Roll back to consent step so the candidate can retry
+      setSaveError(err instanceof Error ? err.message : 'An unexpected error occurred.');
       setStep('consent');
     } finally {
       setIsConsenting(false);
     }
   }
 
-  // ── Step 3 → Step 4: Devices checked ──────────────────────────────────────
   function handleDevicesReady(stream: MediaStream | null) {
     setPreAcquiredStream(stream);
     setStep('live');
   }
-
-  // ── Render steps ───────────────────────────────────────────────────────────
 
   if (step === 'onboarding') {
     return <OnboardingStep onContinue={handleProfileContinue} />;
@@ -123,7 +99,6 @@ export function CandidateOnboardingFlow({
     return <DeviceCheckStep onDevicesReady={handleDevicesReady} />;
   }
 
-  // step === 'live'
   return (
     <InterviewRoom
       roomId={roomId}
@@ -132,8 +107,6 @@ export function CandidateOnboardingFlow({
     />
   );
 }
-
-// ── Internal: Saving / Persisting Screen ──────────────────────────────────────
 
 function SavingScreen() {
   return (
