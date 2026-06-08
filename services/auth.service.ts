@@ -1,14 +1,3 @@
-/**
- * services/auth.service.ts
- * Firebase Authentication operations for recruiter sign-up, sign-in, and sign-out.
- *
- * Pattern:
- *   1. Perform Firebase Auth operation (client SDK).
- *   2. Get a fresh ID token.
- *   3. POST to /api/auth/session → server verifies token and sets httpOnly cookie.
- *
- * The httpOnly cookie (__session) is what Next.js middleware reads to protect routes.
- */
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -16,6 +5,9 @@ import {
   onAuthStateChanged,
   User,
   AuthError,
+  GoogleAuthProvider,
+  signInWithPopup,
+  getAdditionalUserInfo,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
@@ -41,71 +33,96 @@ async function clearSessionCookie(): Promise<void> {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export const authService = {
-  /**
-   * Creates a new recruiter account.
-   * Writes a recruiters/{uid} profile document on first sign-up.
-   */
+
   async signUp(email: string, password: string): Promise<User> {
     const { user } = await createUserWithEmailAndPassword(auth, email, password);
+    const now = new Date().toISOString();
 
-    // Persist recruiter profile — will be blocked by Firestore rules if uid mismatch
     await setDoc(doc(db, 'recruiters', user.uid), {
+      uid: user.uid,
       email: user.email,
-      createdAt: new Date().toISOString(),
+      role: 'recruiter',
+      provider: 'password',
+      createdAt: now,
+      lastLoginAt: now,
       settings: {
-        aiThreshold: 70, // PRD §19: default trust alert threshold
+        aiThreshold: 70,
       },
     });
 
-    // Set server-side session cookie
     const idToken = await user.getIdToken();
     await setSessionCookie(idToken);
 
     return user;
   },
 
-  /**
-   * Signs in an existing recruiter and establishes an httpOnly session cookie.
-   */
   async signIn(email: string, password: string): Promise<User> {
     const { user } = await signInWithEmailAndPassword(auth, email, password);
 
-    // Force-refresh to ensure a fresh token (<5 min) for createSessionCookie.
+    await setDoc(doc(db, 'recruiters', user.uid), {
+      lastLoginAt: new Date().toISOString(),
+    }, { merge: true });
+
     const idToken = await user.getIdToken(true);
     await setSessionCookie(idToken);
 
     return user;
   },
 
-  /**
-   * Signs out the current user and clears the session cookie.
-   */
+  async signInWithGoogle(): Promise<User> {
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+    const additionalInfo = getAdditionalUserInfo(result);
+    const now = new Date().toISOString();
+
+    if (additionalInfo?.isNewUser) {
+      await setDoc(doc(db, 'recruiters', user.uid), {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        role: 'recruiter',
+        provider: 'google',
+        createdAt: now,
+        lastLoginAt: now,
+        settings: {
+          aiThreshold: 70,
+        },
+      });
+    } else {
+      await setDoc(doc(db, 'recruiters', user.uid), {
+        lastLoginAt: now,
+      }, { merge: true });
+    }
+
+    const idToken = await user.getIdToken(true);
+    await setSessionCookie(idToken);
+
+    return user;
+  },
+
   async signOut(): Promise<void> {
     await firebaseSignOut(auth);
     await clearSessionCookie();
   },
 
-  /**
-   * Subscribes to Firebase auth state changes.
-   * Returns the unsubscribe function.
-   */
+
   onAuthChange(callback: (user: User | null) => void): () => void {
     return onAuthStateChanged(auth, callback);
   },
 
-  /**
-   * Returns the currently authenticated user synchronously.
-   * May be null if the auth state hasn't loaded yet — use onAuthChange for reactive access.
-   */
+
   getCurrentUser(): User | null {
     return auth.currentUser;
   },
 };
 
-/**
- * Translates Firebase Auth error codes into user-friendly messages.
- */
+
 export function getAuthErrorMessage(error: unknown): string {
+  if (error instanceof Error && !('code' in error)) {
+    return error.message;
+  }
   const code = (error as AuthError)?.code ?? '';
   switch (code) {
     case 'auth/invalid-credential':
@@ -122,6 +139,8 @@ export function getAuthErrorMessage(error: unknown): string {
       return 'Too many failed attempts. Please wait a few minutes before trying again.';
     case 'auth/user-disabled':
       return 'This account has been disabled. Contact support.';
+    case 'auth/popup-closed-by-user':
+      return 'Sign-in popup was closed before completion.';
     case 'auth/network-request-failed':
       return 'Network error. Please check your connection and try again.';
     default:

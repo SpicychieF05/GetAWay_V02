@@ -1,9 +1,3 @@
-/**
- * lib/env.ts
- * Zod-based environment variable validation.
- * Throws at module load time if any required variable is missing.
- * Per FTL LAUNCH-001.
- */
 import { z } from 'zod';
 
 const clientEnvSchema = z.object({
