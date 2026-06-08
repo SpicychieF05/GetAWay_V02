@@ -3,7 +3,7 @@
 import { Sidebar } from '@/components/layout/Sidebar';
 import { ReactNode, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { getFirebaseAuth } from '@/lib/firebase';
 import { authService } from '@/services/auth.service';
 import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
@@ -13,7 +13,7 @@ export default function RecruiterLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsub = onAuthStateChanged(getFirebaseAuth(), (firebaseUser) => {
       setUser(firebaseUser);
       if (!firebaseUser) {
         router.push('/auth/login');

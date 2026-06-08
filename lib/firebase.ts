@@ -15,6 +15,7 @@ function getFirebaseApp(): FirebaseApp {
   return !getApps().length ? initializeApp(firebaseConfig) : getApp();
 }
 
+
 export function getFirebaseAuth(): Auth {
   return getAuth(getFirebaseApp());
 }
@@ -22,8 +23,3 @@ export function getFirebaseAuth(): Auth {
 export function getFirebaseDb(): Firestore {
   return getFirestore(getFirebaseApp());
 }
-
-
-export const auth = typeof window !== 'undefined' ? getFirebaseAuth() : null as unknown as Auth;
-export const db = typeof window !== 'undefined' ? getFirebaseDb() : null as unknown as Firestore;
-
