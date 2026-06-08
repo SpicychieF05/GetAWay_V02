@@ -4,7 +4,7 @@ import { CandidateOnboardingFlow } from '@/components/candidate/CandidateOnboard
 import { useSearchParams, useParams } from 'next/navigation';
 import { use, useEffect, useState } from 'react';
 import { signInAnonymously } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { getFirebaseAuth } from '@/lib/firebase';
 import { AlertTriangle, Loader2, Clock } from 'lucide-react';
 
 type PageState = 'loading' | 'ready' | 'error-ended' | 'error-invalid' | 'error-generic';
@@ -32,7 +32,7 @@ export default function CandidateRoomPage({ params }: { params: Promise<{ roomId
       }
 
       try {
-        const userCred = await signInAnonymously(auth);
+        const userCred = await signInAnonymously(getFirebaseAuth());
         const candidateUid = userCred.user.uid;
 
         const res = await fetch('/api/room/join', {
