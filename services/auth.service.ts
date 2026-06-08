@@ -10,7 +10,7 @@ import {
   getAdditionalUserInfo,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase';
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -35,6 +35,8 @@ async function clearSessionCookie(): Promise<void> {
 export const authService = {
 
   async signUp(email: string, password: string): Promise<User> {
+    const auth = getFirebaseAuth();
+    const db = getFirebaseDb();
     const { user } = await createUserWithEmailAndPassword(auth, email, password);
     const now = new Date().toISOString();
 
@@ -57,6 +59,8 @@ export const authService = {
   },
 
   async signIn(email: string, password: string): Promise<User> {
+    const auth = getFirebaseAuth();
+    const db = getFirebaseDb();
     const { user } = await signInWithEmailAndPassword(auth, email, password);
 
     await setDoc(doc(db, 'recruiters', user.uid), {
@@ -70,6 +74,8 @@ export const authService = {
   },
 
   async signInWithGoogle(): Promise<User> {
+    const auth = getFirebaseAuth();
+    const db = getFirebaseDb();
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
@@ -103,18 +109,16 @@ export const authService = {
   },
 
   async signOut(): Promise<void> {
-    await firebaseSignOut(auth);
+    await firebaseSignOut(getFirebaseAuth());
     await clearSessionCookie();
   },
 
-
   onAuthChange(callback: (user: User | null) => void): () => void {
-    return onAuthStateChanged(auth, callback);
+    return onAuthStateChanged(getFirebaseAuth(), callback);
   },
 
-
   getCurrentUser(): User | null {
-    return auth.currentUser;
+    return getFirebaseAuth().currentUser;
   },
 };
 
