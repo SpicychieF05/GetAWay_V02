@@ -1,16 +1,5 @@
 "use client";
 
-/**
- * app/recruiter/layout.tsx
- * Shared layout for all recruiter dashboard pages.
- *
- * Auth layer 2 of 3 (see middleware.ts for layer 1):
- *   - Listens to Firebase onAuthStateChanged.
- *   - If the auth state resolves to null (signed out or token expired),
- *     redirect to /auth/login as a client-side backup to the middleware.
- *   - Passes the user's email to the Sidebar for display.
- *   - Wires the Sign Out button to authService.signOut().
- */
 import { Sidebar } from '@/components/layout/Sidebar';
 import { ReactNode, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -20,9 +9,6 @@ import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
 export default function RecruiterLayout({ children }: { children: ReactNode }) {
-  // undefined = loading (auth state not yet determined)
-  // null      = definitively signed out → will redirect
-  // User      = authenticated → render dashboard
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const router = useRouter();
 
@@ -40,12 +26,10 @@ export default function RecruiterLayout({ children }: { children: ReactNode }) {
     try {
       await authService.signOut();
     } finally {
-      // Always redirect after sign-out attempt, even if cookie clear fails.
       router.push('/auth/login');
     }
   };
 
-  // Auth state is still loading — show spinner, prevent content flash.
   if (user === undefined) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center space-y-4">
@@ -57,7 +41,6 @@ export default function RecruiterLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  // User is null (signed out) — redirect is in flight, render nothing.
   if (!user) return null;
 
   return (
