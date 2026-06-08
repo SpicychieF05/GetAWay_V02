@@ -1,4 +1,4 @@
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import {
   collection, doc, getDoc, getDocs, onSnapshot,
   query, where, updateDoc, setDoc, addDoc
@@ -9,6 +9,7 @@ const ROOMS_COLLECTION = 'rooms';
 
 export const roomService = {
   subscribeToRoom(roomId: string, callback: (room: Room | null) => void) {
+    const db = getFirebaseDb();
     const roomRef = doc(db, ROOMS_COLLECTION, roomId);
     return onSnapshot(roomRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -20,6 +21,7 @@ export const roomService = {
   },
 
   async getRoom(roomId: string): Promise<Room | null> {
+    const db = getFirebaseDb();
     const roomRef = doc(db, ROOMS_COLLECTION, roomId);
     const snapshot = await getDoc(roomRef);
     if (snapshot.exists()) {
@@ -29,6 +31,7 @@ export const roomService = {
   },
 
   async updateRoom(roomId: string, data: Partial<Room>) {
+    const db = getFirebaseDb();
     const roomRef = doc(db, ROOMS_COLLECTION, roomId);
     await updateDoc(roomRef, {
       ...data,
@@ -37,6 +40,7 @@ export const roomService = {
   },
 
   async getRecruiterRooms(recruiterId: string): Promise<Room[]> {
+    const db = getFirebaseDb();
     const q = query(collection(db, ROOMS_COLLECTION), where("recruiterId", "==", recruiterId));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
@@ -46,6 +50,7 @@ export const roomService = {
 export const webrtcService = {
   // Signaling (Offer/Answer)
   subscribeToSignalingNode(roomId: string, nodeId: 'offer' | 'answer', callback: (data: WebRTCNode | null) => void) {
+    const db = getFirebaseDb();
     const nodeRef = doc(db, `rooms/${roomId}/webrtc/${nodeId}`);
     return onSnapshot(nodeRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -57,12 +62,14 @@ export const webrtcService = {
   },
 
   async setSignalingNode(roomId: string, nodeId: 'offer' | 'answer', data: WebRTCNode) {
+    const db = getFirebaseDb();
     const nodeRef = doc(db, `rooms/${roomId}/webrtc/${nodeId}`);
     await setDoc(nodeRef, data);
   },
 
   // ICE Candidates
   subscribeToCandidates(roomId: string, collectionName: 'callerCandidates' | 'calleeCandidates', callback: (candidate: ICECandidate) => void) {
+    const db = getFirebaseDb();
     const candidatesRef = collection(db, `rooms/${roomId}/${collectionName}`);
     return onSnapshot(candidatesRef, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
@@ -74,6 +81,7 @@ export const webrtcService = {
   },
 
   async addCandidate(roomId: string, collectionName: 'callerCandidates' | 'calleeCandidates', candidate: ICECandidate) {
+    const db = getFirebaseDb();
     const candidatesRef = collection(db, `rooms/${roomId}/${collectionName}`);
     await addDoc(candidatesRef, candidate);
   }
