@@ -2,156 +2,127 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
     // ─── Global Safety Net ───────────────────────────────────────────────────
-    // All paths default to DENY. Access is explicitly granted below.
     match /{document=**} {
       allow read, write: if false;
     }
 
     // ─── Helper functions ─────────────────────────────────────────────────────
-    function isSignedIn() { return request.auth != null; }
-    function existing() { return resource.data; }
-    function incoming() { return request.resource.data; }
+    function isSignedIn()    { return request.auth != null; }
+    function incoming()      { return request.resource.data; }
+    function existing()      { return resource.data; }
+
+    // Security: All subcollection helpers are module-level to eliminate
+    // duplicate get() calls across candidateSessions, alerts, webrtc, and ICE
+    // collections. Each get() is a billed Firestore read.
+    function isRoomOwner(roomId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
+    }
+
+    function isRoomCandidate(roomId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
+    }
+
+    function isRoomActive(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId)).data.status != 'ended';
+    }
 
     // ─── Recruiter Profiles ───────────────────────────────────────────────────
-    // Security Architecture §7: "A recruiter document can ONLY be read or written
-    // by the recruiter whose Firebase UID matches the document ID."
-    // Required for authService.signUp() to write recruiters/{uid} on registration.
+    // Security Architecture §7: recruiter doc scoped to matching Firebase UID.
     match /recruiters/{uid} {
-      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow read:  if isSignedIn() && request.auth.uid == uid;
       allow write: if isSignedIn() && request.auth.uid == uid;
     }
 
     // ─── Interview Rooms ──────────────────────────────────────────────────────
     match /rooms/{roomId} {
-      // Ownership check: the recruiter who created the room.
-      function isRoomOwner() {
-        return isSignedIn() && existing().recruiterId == request.auth.uid;
-      }
-      // [PHASE 1] Candidate identity check — candidateUid is written by /api/room/join
-      // before any Firestore client read is attempted, so this function is now safe.
-      function isRoomCandidate() {
-        return isSignedIn() && existing().candidateUid == request.auth.uid;
-      }
+      allow read: if isRoomOwner(roomId) || isRoomCandidate(roomId);
 
-      // [PHASE 1] Candidates can now read their room document so the onboarding
-      // flow can display room metadata. Read is gated on candidateUid being set
-      // (enforced by the isRoomCandidate() function above).
-      allow read: if isRoomOwner() || isRoomCandidate();
+      // Security: recruiterId is set by the Admin SDK at creation; candidates
+      // have no create or delete permissions. Room status is recruiter-only.
+      allow create, delete: if false;
 
-      // Recruiter can update room status, trustScore, updatedAt.
-      // Candidate can update only their profile fields (defence-in-depth;
-      // actual writes go through Admin SDK API route which bypasses rules).
       allow update: if
-        (isRoomOwner() && incoming().diff(existing()).affectedKeys()
-          .hasOnly(['status', 'updatedAt', 'trustScore']))
-        ||
-        (isRoomCandidate() && incoming().diff(existing()).affectedKeys()
-          .hasOnly(['candidate', 'candidateProfileSet', 'updatedAt', 'joinedAt']));
+        isRoomOwner(roomId) &&
+        incoming().diff(existing()).affectedKeys()
+          .hasOnly(['status', 'updatedAt', 'trustScore']);
 
-      allow create, delete: if false; // Admin SDK only
+      // ─── Candidate Sessions ───────────────────────────────────────────────
+      // Security Architecture §10: "Consent must be recorded server-side."
+      // All writes are Admin SDK only. Client write is explicitly denied.
+      match /candidateSessions/{sessionId} {
+        allow read:             if isRoomOwner(roomId) || isRoomCandidate(roomId);
+        allow create:           if false;
+        allow update, delete:   if false;
+      }
+
+      // ─── Alerts ───────────────────────────────────────────────────────────
+      // Security Architecture §7: "Alerts: only room owner can read;
+      // AI system writes via Admin SDK."
+      // Candidates can no longer create alerts directly — false alert injection
+      // is a CRITICAL risk (poisoned hiring reports).
+      match /alerts/{alertId} {
+        allow read:             if isRoomOwner(roomId);
+        allow create:           if false;
+        allow update, delete:   if false;
+      }
+
+      // ─── Trust Logs ───────────────────────────────────────────────────────
+      // Security Architecture §8: "TrustLogs can only be APPENDED by the
+      // server via Admin SDK. TrustLogs can only be READ by the recruiter."
+      // Trust scores are an immutable audit trail for employment decisions.
+      match /trustLogs/{logId} {
+        allow read:             if false;
+        allow write:            if false;
+      }
+
+      // ─── Reports ──────────────────────────────────────────────────────────
+      // Security Architecture §8: "Reports can only be WRITTEN by the server
+      // at session end. Reports can only be READ by the recruiter who owns
+      // the room."
+      match /reports/{reportId} {
+        allow read:             if false;
+        allow write:            if false;
+      }
+
+      // ─── WebRTC Signaling (Offer / Answer) ────────────────────────────────
+      // Both room participants need read/write during SDP negotiation only.
+      // Signaling is blocked once the room is ended.
+      match /webrtc/{nodeId} {
+        allow read:           if isRoomOwner(roomId) || isRoomCandidate(roomId);
+        allow create, update: if (isRoomOwner(roomId) || isRoomCandidate(roomId)) && isRoomActive(roomId);
+        allow delete:         if isRoomOwner(roomId);
+      }
+
+      // ─── ICE Candidates: Caller (Recruiter → Candidate) ───────────────────
+      match /callerCandidates/{candidateId} {
+        allow read:           if isRoomOwner(roomId) || isRoomCandidate(roomId);
+        allow create:         if isRoomOwner(roomId);
+        allow update, delete: if false;
+      }
+
+      // ─── ICE Candidates: Callee (Candidate → Recruiter) ───────────────────
+      match /calleeCandidates/{candidateId} {
+        allow read:           if isRoomOwner(roomId) || isRoomCandidate(roomId);
+        allow create:         if isRoomCandidate(roomId);
+        allow update, delete: if false;
+      }
     }
 
-    // ─── Candidate Sessions (Phase 1) ─────────────────────────────────────────
-    // Consent audit records — written once by the candidate, readable by the room owner.
-    // Security Architecture §10: "Consent must be recorded server-side."
-    // Note: The actual write is performed server-side via Admin SDK (/api/candidate/profile).
-    // These client-side rules serve as defence-in-depth.
-    match /rooms/{roomId}/candidateSessions/{sessionId} {
-      function isParentRoomOwner() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
-      }
-      function isParentRoomCandidate() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
-      }
-
-      // Room owner (recruiter) can read consent records for reporting.
-      // Candidate can read their own session document.
-      allow read: if isParentRoomOwner() || isParentRoomCandidate();
-
-      // Candidate can create their session record once.
-      // [IMPORTANT] In practice this is always done server-side via Admin SDK.
-      allow create: if isParentRoomCandidate();
-
-      // Consent records are immutable — no updates or deletes allowed.
-      allow update, delete: if false;
+    // ─── Analytics ────────────────────────────────────────────────────────────
+    // Architecture Analysis §analytics: future pre-computed metrics written by
+    // Cloud Functions. All client access is denied; reads go via the API layer.
+    match /analytics/{docId} {
+      allow read, write: if false;
     }
 
-    // ─── Alerts (AI Monitoring) ───────────────────────────────────────────────
-    // Security Architecture §7: "Alerts: only room owner can read; AI system writes via Admin SDK."
-    match /rooms/{roomId}/alerts/{alertId} {
-      function isParentRoomOwner() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
-      }
-      function isParentRoomCandidate() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
-      }
-
-      // Only the room owner (recruiter) can read alerts.
-      allow read: if isParentRoomOwner();
-      // Candidates can write alerts (AI-generated events in their browser).
-      // [PHASE 2] This will be restricted to server-side Admin SDK writes only.
-      allow create: if isParentRoomCandidate();
-      allow update, delete: if false; // Alerts are immutable once written.
-    }
-
-    // ─── WebRTC Signaling (Offer / Answer) ────────────────────────────────────
-    // Both the recruiter (caller) and candidate (callee) need read/write access
-    // during the SDP negotiation phase.
-    // [PHASE 1] Tightened: signaling only permitted on non-ended rooms.
-    match /rooms/{roomId}/webrtc/{nodeId} {
-      function isParentRoomOwner() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
-      }
-      function isParentRoomCandidate() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
-      }
-      function isRoomActive() {
-        return get(/databases/$(database)/documents/rooms/$(roomId)).data.status != 'ended';
-      }
-
-      allow read: if isParentRoomOwner() || isParentRoomCandidate();
-      allow create, update: if (isParentRoomOwner() || isParentRoomCandidate()) && isRoomActive();
-      allow delete: if isParentRoomOwner();
-    }
-
-    // ─── ICE Candidates: Caller (Recruiter → Candidate) ──────────────────────
-    match /rooms/{roomId}/callerCandidates/{candidateId} {
-      function isParentRoomOwner() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
-      }
-      function isParentRoomCandidate() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
-      }
-
-      allow read: if isParentRoomOwner() || isParentRoomCandidate();
-      allow create: if isParentRoomOwner(); // Only the recruiter writes caller ICE candidates.
-      allow update, delete: if false;
-    }
-
-    // ─── ICE Candidates: Callee (Candidate → Recruiter) ──────────────────────
-    // [PHASE 1] candidateUid is now reliably set before any ICE writes are attempted.
-    match /rooms/{roomId}/calleeCandidates/{candidateId} {
-      function isParentRoomOwner() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.recruiterId == request.auth.uid;
-      }
-      function isParentRoomCandidate() {
-        return isSignedIn() &&
-          get(/databases/$(database)/documents/rooms/$(roomId)).data.candidateUid == request.auth.uid;
-      }
-
-      allow read: if isParentRoomOwner() || isParentRoomCandidate();
-      allow create: if isParentRoomCandidate(); // Only the candidate writes callee ICE candidates.
-      allow update, delete: if false;
+    // ─── OTP Codes ───────────────────────────────────────────────────────────
+    // Server-only collection — never accessible from any client.
+    match /otpCodes/{email} {
+      allow read, write: if false;
     }
   }
 }
