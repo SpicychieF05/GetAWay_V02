@@ -6,7 +6,7 @@ import { Room } from '@/types';
 import { createRoom } from '@/app/actions/room.actions';
 import { Video, Plus, Copy, Check, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
-import { auth } from '@/lib/firebase';
+import { getFirebaseAuth } from '@/lib/firebase';
 
 export default function SessionsPage() {
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -14,7 +14,7 @@ export default function SessionsPage() {
   const [creating, setCreating] = useState(false);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
-  const recruiterId = auth.currentUser?.uid;
+  const recruiterId = getFirebaseAuth().currentUser?.uid;
 
   useEffect(() => {
     async function loadRooms() {
